@@ -1,4 +1,4 @@
-# zs-yaml
+<img src="doc/zs-yaml.png" height="100">
 
 **zs-yaml** is a Python library designed to transform YAML representations of objects defined within zserio schemas to either the natively supported zserio text/debugging format (using JSON) and/or the binary format. This project aims to make data handling and transformation more intuitive and less cluttered, using YAML's human-readable format.
 
