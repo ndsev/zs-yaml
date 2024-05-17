@@ -44,21 +44,29 @@ clutter.
 Using **zs-yaml**, you can define the same data in a more human-readable YAML format and include necessary metadata along with a custom transformation for the birthdate:
 
 ```yaml
+# 1) Metadata is used to specify the type needed for
+#    (de-)serialization and custom transform functions
+# 2) User are free to use their preferred date format
+#    for the birth data as the a normalization function
+#    get invoked.
+# 3) Yaml allows avoiding clutter and adding comments
+#    like this one :)
+
 _meta:
   schema_module: "installed.zserio.schema.module"
   schema_type: "Person"
   transformation_module: "./transformations.py"
 
 name: John Doe
+
 birthdate:
-  # Users are free to use their prefered date format
-  # The transformation logic will take care about
-  # converting to the expected format.
   _f: normalize_date
   _a: "01/01/1990"
 birth_location: Springfield, USA
+
 current_job: Software Engineer
 income: 75000
+
 experience:
   - role: Intern
     years: 1
