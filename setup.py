@@ -10,7 +10,7 @@ setup(
     ],
     entry_points={
         'console_scripts': [
-                'zs-yaml=main:main'
+                'zs-yaml=zs_yaml.main:main'
         ],
     },
 )

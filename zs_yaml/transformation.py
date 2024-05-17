@@ -3,7 +3,6 @@ import json
 import importlib
 import zserio
 
-
 class TransformationRegistry:
     def __init__(self):
         self.transformations = {}
@@ -22,8 +21,6 @@ class TransformationRegistry:
                 func = self.get(data['_f'])
                 args = data['_a']
                 if func and callable(func):
-                    # If the function accepts a registry argument, pass this
-                    # this allows recursive invocation of process_data
                     if isinstance(args, dict):
                         return func(**args, registry=self) if 'registry' in func.__code__.co_varnames else func(**args)
                     else:
@@ -34,13 +31,11 @@ class TransformationRegistry:
                 return {key: self.process_data(value) for key, value in data.items()}
         return data
 
-
 def _load_module_from_file(module_name, file_path):
     spec = importlib.util.spec_from_file_location(module_name, file_path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
-
 
 def yaml_to_zs_json(yaml_input_path, json_output_path, registry=None):
     with open(yaml_input_path, 'r') as yaml_file:
@@ -69,13 +64,36 @@ def yaml_to_zs_json(yaml_input_path, json_output_path, registry=None):
 
     return meta
 
-
 def json_to_zs_bin(json_input_path, bin_output_path, module_name, type_name):
     module = importlib.import_module(module_name)
     ImportedType = getattr(module, type_name)
-    if (ImportedType is None):
+    if ImportedType is None:
         raise ValueError(f"Type {type_name} not found in module {module_name}")
     zserio_object = zserio.from_json_file(ImportedType, json_input_path)
     zserio.serialize_to_file(zserio_object, bin_output_path)
 
+def bin_to_yaml(bin_input_path, yaml_output_path):
+    with open(yaml_output_path, 'r') as yaml_file:
+        meta = yaml.safe_load(yaml_file)
 
+    schema_module = meta.get('_meta', {}).get('schema_module')
+    schema_type = meta.get('_meta', {}).get('schema_type')
+    if not schema_module or not schema_type:
+        raise ValueError("Error: schema_module and schema_type must be specified in the _meta section of the YAML file")
+
+    module = importlib.import_module(schema_module)
+    ImportedType = getattr(module, schema_type)
+    if ImportedType is None:
+        raise ValueError(f"Type {schema_type} not found in module {schema_module}")
+
+    zserio_object = zserio.deserialize_from_file(ImportedType, bin_input_path)
+    json_data = zserio.to_json_string(zserio_object)
+
+    data = json.loads(json_data)
+
+    # Create a new dictionary to ensure _meta comes first
+    final_data = {'_meta': meta['_meta']}
+    final_data.update(data)
+
+    with open(yaml_output_path, 'w') as yaml_file:
+        yaml.safe_dump(final_data, yaml_file, default_flow_style=False, sort_keys=False)
