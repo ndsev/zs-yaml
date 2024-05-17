@@ -1,7 +1,8 @@
 import argparse
+import os
 import sys
+import traceback
 from zs_yaml.transformation import TransformationRegistry, yaml_to_zs_json, json_to_zs_bin, bin_to_yaml
-
 
 def main():
     parser = argparse.ArgumentParser(
@@ -12,14 +13,15 @@ def main():
                     '  _meta:\n'
                     '    schema_module: <module_name>\n'
                     '    schema_type: <type_name>',
-        usage='%(prog)s <input_path> <output_path>\n\n'
+        usage='%(prog)s <input_path> [output_path]\n\n'
               'Example usage:\n'
               '  %(prog)s input.yaml output.bin\n'
               '  %(prog)s input.bin output.yaml\n'
-              '  %(prog)s input.yaml output (output without extension will be treated as binary)'
+              '  %(prog)s input.yaml (output will be input.bin)\n'
+              '  %(prog)s input.bin (output will be input.yaml)'
     )
     parser.add_argument('input_path', type=str, help='Path to the input file (YAML or binary)')
-    parser.add_argument('output_path', type=str, help='Path to the output file (YAML or binary)')
+    parser.add_argument('output_path', type=str, nargs='?', help='Path to the output file (YAML or binary)')
 
     if len(sys.argv) == 1:
         parser.print_help(sys.stderr)
@@ -27,27 +29,37 @@ def main():
 
     args = parser.parse_args()
 
+    input_path = args.input_path
+    output_path = args.output_path
+
+    if not output_path:
+        base_name, ext = os.path.splitext(input_path)
+        if ext == '.yaml':
+            output_path = f"{base_name}.bin"
+        else:
+            output_path = f"{base_name}.yaml"
+
     registry = TransformationRegistry()
 
     try:
-        if args.input_path.endswith('.yaml'):
+        if input_path.endswith('.yaml'):
             # Convert YAML to binary
-            meta = yaml_to_zs_json(args.input_path, 'temp.json', registry)
+            meta = yaml_to_zs_json(input_path, 'temp.json', registry)
             schema_module = meta.get('schema_module')
             schema_type = meta.get('schema_type')
             if not schema_module or not schema_type:
                 print("Error: schema_module and schema_type must be specified in the _meta section for binary output")
                 sys.exit(1)
-            json_to_zs_bin('temp.json', args.output_path, schema_module, schema_type)
+            json_to_zs_bin('temp.json', output_path, schema_module, schema_type)
         else:
             # Convert binary to YAML
-            bin_to_yaml(args.input_path, args.output_path)
+            bin_to_yaml(input_path, output_path)
     except Exception as e:
         print(f"Error processing file: {e}")
+        traceback.print_exc()
         sys.exit(1)
 
     print("Finished successfully :)")
-
 
 if __name__ == "__main__":
     main()
