@@ -6,41 +6,16 @@
 - **Metadata Inclusion**: Automatically includes metadata in the YAML, eliminating the need for users to manually identify the correct type when importing JSON data, ensuring seamless (de-)serialization.
 - **Custom Transformations**: Allows for hooking in custom transformations so that users can work with familiar formats (e.g., dates or coordinate representations) instead of thinking in unfamiliar formats.
 
-### JSON vs YAML Example
+### Example
 
-#### JSON Input Example
-Consider a data structure where we have a person object with basic data,
-location of birth, current job, income, and a list of experience levels.
-Note that the JSON example does not include metadata, requiring users to
-manually find and set the correct type, when serializing the data.
-In addition no comments are supported and `{...}` and `"..."` add must-have
-clutter.
+#### Zserio schema module creation
 
-```json
-{
-  "name": "John Doe",
-  "birthdate": "1990-01-01",
-  "birth_location": "Springfield, USA",
-  "current_job": "Software Engineer",
-  "income": 75000,
-  "experience": [
-    {
-      "role": "Intern",
-      "years": 1
-    },
-    {
-      "role": "Junior Developer",
-      "years": 2
-    },
-    {
-      "role": "Senior Developer",
-      "years": 3
-    }
-  ]
-}
-```
+1. Create the zserio schema
+2. Create the Python APIs.
+3. Ensure that the schema modules are available in the Python env your are using.
 
-#### YAML Input Example with Metadata and Transformations
+#### YAML Example with Metadata and Transformations
+
 Using **zs-yaml**, you can define the same data in a more human-readable YAML format and include necessary metadata along with a custom transformation for the birthdate:
 
 ```yaml
