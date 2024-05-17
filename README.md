@@ -45,7 +45,7 @@ Using **zs-yaml**, you can define the same data in a more human-readable YAML fo
 
 ```yaml
 _meta:
-  schema_module: "your.schema.module"
+  schema_module: "installed.zserio.schema.module"
   schema_type: "Person"
   transformation_module: "./transformations.py"
 
@@ -80,6 +80,10 @@ def normalize_date(date_str):
             pass
     raise ValueError(f"Date {date_str} is not in a recognized format")
 ```
+
+#### Creating the binary representation
+
+After you have installed `zs-yaml`(see below), call `zs-yaml person.yaml person.bin`
 
 ## Features
 
