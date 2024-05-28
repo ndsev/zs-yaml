@@ -7,12 +7,20 @@ class TransformationRegistry:
     def __init__(self):
         self.transformations = {}
         self.register('include_external', self._include_external)
+        self.register('repeat_node', self._repeat_node)
 
     def register(self, name, func):
         self.transformations[name] = func
 
     def get(self, name):
         return self.transformations.get(name)
+
+    def _repeat_node(self, node, count, registry=None):
+        """
+        Repeat a specific node n times and return as a list.
+        """
+        return [node] * count
+
     def _include_external(self, file, registry):
         """
         Include external YAML by transforming it to JSON and using zserio.
