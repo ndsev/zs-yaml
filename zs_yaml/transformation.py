@@ -6,12 +6,48 @@ import zserio
 class TransformationRegistry:
     def __init__(self):
         self.transformations = {}
+        self.register('include_external', self._include_external)
 
     def register(self, name, func):
         self.transformations[name] = func
 
     def get(self, name):
         return self.transformations.get(name)
+    def _include_external(self, file, registry):
+        """
+        Include external YAML by transforming it to JSON and using zserio.
+        The function reads an external YAML file specified by 'file', processes it,
+        and includes its binary stream in the resulting JSON output using the meta
+        information defined in the external YAML file.
+        """
+        with open(file, 'r') as yaml_file:
+            yaml_data = yaml.safe_load(yaml_file)
+
+        # Extract meta information for schema_module and schema_type
+        meta = yaml_data.pop('_meta', {})
+        schema_module = meta.get('schema_module')
+        schema_type = meta.get('schema_type')
+
+        if not schema_module or not schema_type:
+            raise ValueError("Error: schema_module and schema_type must be specified in the _meta section of the YAML file")
+
+        # Process the YAML data using the registry
+        processed_data = registry.process_data(yaml_data)
+        json_string = json.dumps(processed_data)
+
+        # Convert JSON to binary using zserio
+        module = importlib.import_module(schema_module)
+        ImportedType = getattr(module, schema_type)
+        zserio_object = zserio.from_json_string(ImportedType, json_string)
+        writer = zserio.BitStreamWriter()
+        zserio_object.write(writer)
+        bits = zserio.BitBuffer(writer.byte_array, writer.bitposition)
+
+        # Encode the binary data
+        encoded_bytes = list(bits.buffer)
+        data = {"buffer": encoded_bytes, "bitSize": bits.bitsize}
+
+        return data
 
     def process_data(self, data):
         if isinstance(data, list):
