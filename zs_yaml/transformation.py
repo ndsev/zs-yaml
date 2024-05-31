@@ -108,6 +108,12 @@ def yaml_to_zs_json(yaml_input_path, json_output_path, registry=None):
 
     return meta
 
+def json_to_yaml(json_input_path, yaml_output_path, registry=None):
+    with open(json_input_path, 'r') as json_file:
+        data = json.load(json_file)
+    with open(yaml_output_path, 'w') as yaml_file:
+        yaml.safe_dump(data, yaml_file, default_flow_style=False, sort_keys=False)
+
 def json_to_zs_bin(json_input_path, bin_output_path, module_name, type_name):
     module = importlib.import_module(module_name)
     ImportedType = getattr(module, type_name)
