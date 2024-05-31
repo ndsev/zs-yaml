@@ -1,4 +1,5 @@
 import argparse
+import traceback
 import sys
 import os
 from zs_yaml.transformation import TransformationRegistry, yaml_to_zs_json, json_to_zs_bin, bin_to_yaml, json_to_yaml
@@ -77,6 +78,8 @@ def main():
             sys.exit(1)
     except Exception as e:
         print(f"Error processing file: {e}")
+        # print the entire stack trace for debugging
+        traceback.print_exc()
         sys.exit(1)
 
     print("Finished successfully :)")
