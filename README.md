@@ -6,15 +6,50 @@
 - **Metadata Inclusion**: Automatically includes metadata in the YAML, eliminating the need for users to manually identify the correct type when importing JSON data, ensuring seamless (de-)serialization.
 - **Custom Transformations**: Allows for hooking in custom transformations so that users can work with familiar formats (e.g., dates or coordinate representations) instead of thinking in unfamiliar formats.
 
-### Example
+## Example
 
-#### Zserio schema module creation
+### Zserio Schema Module Creation
 
-1. Create the zserio schema
-2. Create the Python APIs.
-3. Ensure that the schema modules are available in the Python env your are using.
+1. **Create the Zserio schema**:
+   - Create a file named `person.zs` with the following content:
 
-#### YAML Example with Metadata and Transformations
+     ```zserio
+     package person;
+
+     struct Person
+     {
+         string name;
+         string birthdate;
+         string birth_location;
+         string current_job;
+         int32 income;
+         RoleExperience experience[];
+     };
+
+     struct RoleExperience
+     {
+         string role;
+         int32 years;
+     };
+     ```
+
+2. **Compile the Zserio schema and generate Python APIs**:
+   - Run the following command to compile the schema and generate Python sources:
+
+     ```sh
+     # Generated sources needs type infos so that 'json <-> bin'
+     # conversion works, which is utilized by zs-yaml
+     zserio person.zs -withTypeInfoCode -python zs_gen_api
+     ```
+
+3. **Ensure that the schema modules are available in the Python environment**:
+   - Export the `PYTHONPATH` to include the directory containing the generated Python sources:
+
+     ```sh
+     export PYTHONPATH="zs_gen_api"
+     ```
+
+### Use zs-yaml to create data
 
 Using **zs-yaml**, you can define the same data in a more human-readable YAML format and include necessary metadata along with a custom transformation for the birthdate:
 
@@ -28,8 +63,8 @@ Using **zs-yaml**, you can define the same data in a more human-readable YAML fo
 #    like this one :)
 
 _meta:
-  schema_module: "installed.zserio.schema.module"
-  schema_type: "Person"
+  schema_module: person.api
+  schema_type: Person
   transformation_module: "./transformations.py"
 
 name: John Doe
@@ -64,9 +99,17 @@ def normalize_date(date_str):
     raise ValueError(f"Date {date_str} is not in a recognized format")
 ```
 
-#### Creating the binary representation
+#### Creating the Binary Representation
 
-After you have installed `zs-yaml`(see below), call `zs-yaml person.yaml person.bin`
+After you have installed `zs-yaml`, call `zs-yaml` to convert your YAML file to a binary representation:
+
+```sh
+# Install zs-yaml if not already installed,
+# there is not yet a pip package so follow the instructions below
+
+# Create the binary representation from the YAML file
+zs-yaml person.yaml person.bin
+```
 
 ## Installation
 
@@ -105,9 +148,8 @@ In the future, we may consider using YAML tags for a more integrated approach to
 
 ## Project Structure
 
-- `main.py`: Main script to run the application.
 - `setup.py`: Script for setting up the project and installing dependencies.
-- `zs_yaml/`: Directory containing the core library for YAML transformations.
+- `zs_yaml/`: Directory containing the actual `zs-yaml` implementation.
 
 ## Reference
 
