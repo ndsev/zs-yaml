@@ -2,11 +2,11 @@ import argparse
 import traceback
 import sys
 import os
-from zs_yaml.transformation import (
-    TransformationRegistry,
-    yaml_to_zs_json,
+from zs_yaml.yaml_transformer import YamlTransformer
+from zs_yaml.convert import (
     yaml_to_bin,
     bin_to_yaml,
+    yaml_to_json,
     json_to_yaml
     )
 
@@ -37,12 +37,7 @@ def parse_arguments():
 
     return parser.parse_args()
 
-def get_file_extensions(input_path, output_path):
-    input_extension = os.path.splitext(input_path)[1].lower()
-    output_extension = os.path.splitext(output_path)[1].lower() if output_path else None
-    return input_extension, output_extension
-
-def process_yaml_input(input_path, output_path, registry):
+def process_yaml_input(input_path, output_path):
     if not output_path:
         output_extension = '.bin'
         output_path = os.path.splitext(input_path)[0] + output_extension
@@ -50,9 +45,9 @@ def process_yaml_input(input_path, output_path, registry):
         output_extension = os.path.splitext(output_path)[1].lower()
 
     if output_extension == '.bin' or output_extension == '':
-        yaml_to_bin(input_path, output_path, registry)
+        yaml_to_bin(input_path, output_path)
     elif output_extension == '.json':
-        yaml_to_zs_json(input_path, output_path, registry)
+        yaml_to_json(input_path, output_path)
     else:
         raise ValueError("Unsupported output file extension for YAML input")
 
@@ -61,7 +56,7 @@ def process_binary_input(input_path, output_path):
         raise ValueError("Output path must be specified for binary input")
     bin_to_yaml(input_path, output_path)
 
-def process_json_input(input_path, output_path, registry):
+def process_json_input(input_path, output_path):
     if not output_path:
         output_extension = '.yaml'
         output_path = os.path.splitext(input_path)[0] + output_extension
@@ -69,22 +64,22 @@ def process_json_input(input_path, output_path, registry):
         output_extension = os.path.splitext(output_path)[1].lower()
 
     if output_extension == '.yaml':
-        json_to_yaml(input_path, output_path, registry)
+        json_to_yaml(input_path, output_path)
     else:
         raise ValueError("Unsupported output file extension for JSON input")
 
 def main():
     args = parse_arguments()
-    registry = TransformationRegistry()
-    input_extension, output_extension = get_file_extensions(args.input_path, args.output_path)
+
+    input_extension = os.path.splitext(args.input_path)[1].lower()
 
     try:
         if input_extension == '.yaml':
-            process_yaml_input(args.input_path, args.output_path, registry)
+            process_yaml_input(args.input_path, args.output_path)
         elif input_extension == '.bin' or input_extension == '':
             process_binary_input(args.input_path, args.output_path)
         elif input_extension == '.json':
-            process_json_input(args.input_path, args.output_path, registry)
+            process_json_input(args.input_path, args.output_path)
         else:
             raise ValueError("Unsupported input file extension")
     except Exception as e:
