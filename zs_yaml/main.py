@@ -2,25 +2,31 @@ import argparse
 import traceback
 import sys
 import os
-from zs_yaml.transformation import TransformationRegistry, yaml_to_zs_json, json_to_zs_bin, bin_to_yaml, json_to_yaml
+from zs_yaml.transformation import (
+    TransformationRegistry,
+    yaml_to_zs_json,
+    yaml_to_bin,
+    bin_to_yaml,
+    json_to_yaml
+    )
 
 
-def main():
+def parse_arguments():
     parser = argparse.ArgumentParser(
         description='Convert between YAML, JSON, and binary formats.\n'
-                    'To convert from binary to YAML, the target YAML file must already exist with metadata.\n'
-                    'The metadata is required to identify the correct Python type for deserialization.\n'
-                    'The minimal metadata content in the target YAML file should be:\n'
-                    '  _meta:\n'
-                    '    schema_module: <module_name>\n'
-                    '    schema_type: <type_name>',
+        'To convert from binary to YAML, the target YAML file must already exist with metadata.\n'
+        'The metadata is required to identify the correct Python type for deserialization.\n'
+        'The minimal metadata content in the target YAML file should be:\n'
+        ' _meta:\n'
+        ' schema_module: <module_name>\n'
+        ' schema_type: <type_name>',
         usage='%(prog)s <input_path> [output_path]\n\n'
-              'Example usage:\n'
-              '  %(prog)s input.yaml output.bin\n'
-              '  %(prog)s input.bin output.yaml\n'
-              '  %(prog)s input.yaml output.json\n'
-              '  %(prog)s input.json output.yaml\n'
-              '  %(prog)s input.yaml (output will be inferred as binary if not specified)'
+        'Example usage:\n'
+        ' %(prog)s input.yaml output.bin\n'
+        ' %(prog)s input.bin output.yaml\n'
+        ' %(prog)s input.yaml output.json\n'
+        ' %(prog)s input.json output.yaml\n'
+        ' %(prog)s input.yaml (output will be inferred as binary if not specified)'
     )
     parser.add_argument('input_path', type=str, help='Path to the input file (YAML, JSON, or binary)')
     parser.add_argument('output_path', type=str, nargs='?', help='Path to the output file (YAML, JSON, or binary)')
@@ -29,61 +35,64 @@ def main():
         parser.print_help(sys.stderr)
         sys.exit(1)
 
-    args = parser.parse_args()
+    return parser.parse_args()
 
+def get_file_extensions(input_path, output_path):
+    input_extension = os.path.splitext(input_path)[1].lower()
+    output_extension = os.path.splitext(output_path)[1].lower() if output_path else None
+    return input_extension, output_extension
+
+def process_yaml_input(input_path, output_path, registry):
+    if not output_path:
+        output_extension = '.bin'
+        output_path = os.path.splitext(input_path)[0] + output_extension
+    else:
+        output_extension = os.path.splitext(output_path)[1].lower()
+
+    if output_extension == '.bin' or output_extension == '':
+        yaml_to_bin(input_path, output_path, registry)
+    elif output_extension == '.json':
+        yaml_to_zs_json(input_path, output_path, registry)
+    else:
+        raise ValueError("Unsupported output file extension for YAML input")
+
+def process_binary_input(input_path, output_path):
+    if not output_path:
+        raise ValueError("Output path must be specified for binary input")
+    bin_to_yaml(input_path, output_path)
+
+def process_json_input(input_path, output_path, registry):
+    if not output_path:
+        output_extension = '.yaml'
+        output_path = os.path.splitext(input_path)[0] + output_extension
+    else:
+        output_extension = os.path.splitext(output_path)[1].lower()
+
+    if output_extension == '.yaml':
+        json_to_yaml(input_path, output_path, registry)
+    else:
+        raise ValueError("Unsupported output file extension for JSON input")
+
+def main():
+    args = parse_arguments()
     registry = TransformationRegistry()
-
-    input_extension = os.path.splitext(args.input_path)[1].lower()
-    output_extension = os.path.splitext(args.output_path)[1].lower() if args.output_path else None
+    input_extension, output_extension = get_file_extensions(args.input_path, args.output_path)
 
     try:
         if input_extension == '.yaml':
-            if not args.output_path:
-                output_extension = '.bin'
-                args.output_path = os.path.splitext(args.input_path)[0] + output_extension
-
-            if output_extension == '.bin' or output_extension == '':
-                # Convert YAML to binary
-                meta = yaml_to_zs_json(args.input_path, 'temp.json', registry)
-                schema_module = meta.get('schema_module')
-                schema_type = meta.get('schema_type')
-                if not schema_module or not schema_type:
-                    print("Error: schema_module and schema_type must be specified in the _meta section for binary output")
-                    sys.exit(1)
-                json_to_zs_bin('temp.json', args.output_path, schema_module, schema_type)
-            elif output_extension == '.json':
-                # Convert YAML to JSON
-                yaml_to_zs_json(args.input_path, args.output_path, registry)
-            else:
-                print("Error: Unsupported output file extension for YAML input")
-                sys.exit(1)
+            process_yaml_input(args.input_path, args.output_path, registry)
         elif input_extension == '.bin' or input_extension == '':
-            if not args.output_path:
-                print("Error: Output path must be specified for binary input")
-                sys.exit(1)
-            # Convert binary to YAML
-            bin_to_yaml(args.input_path, args.output_path)
+            process_binary_input(args.input_path, args.output_path)
         elif input_extension == '.json':
-            if not args.output_path:
-                output_extension = '.yaml'
-                args.output_path = os.path.splitext(args.input_path)[0] + output_extension
-            if output_extension == '.yaml':
-                # Convert JSON to YAML
-                json_to_yaml(args.input_path, args.output_path, registry)
-            else:
-                print("Error: Unsupported output file extension for JSON input")
-                sys.exit(1)
+            process_json_input(args.input_path, args.output_path, registry)
         else:
-            print("Error: Unsupported input file extension")
-            sys.exit(1)
+            raise ValueError("Unsupported input file extension")
     except Exception as e:
         print(f"Error processing file: {e}")
-        # print the entire stack trace for debugging
         traceback.print_exc()
         sys.exit(1)
 
     print("Finished successfully :)")
-
 
 if __name__ == "__main__":
     main()
