@@ -1,4 +1,5 @@
 import importlib
+import importlib.util
 import zs_yaml.built_in_transformations
 
 class YamlTransformer:
