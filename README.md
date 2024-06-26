@@ -117,12 +117,15 @@ zs-yaml person.yaml person.bin
 
 ## Installation
 
-You can install the package in development mode by cloning the repository and using `pip3`:
+Currently, the Python package is only available at test.pypi. Once the official release is available,
+you can install the package without specifying an index URL.
 
 ```bash
-git clone https://github.com/yourusername/zs-yaml.git
-cd zs-yaml
-pip3 install -e .
+python -m pip install \
+       --index-url https://test.pypi.org/simple/ \
+       --extra-index-url https://pypi.org/simple/ \
+       --upgrade \
+       zs-yaml
 ```
 
 ## Usage
