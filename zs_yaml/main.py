@@ -2,24 +2,28 @@ import argparse
 import traceback
 import sys
 import os
-from zs_yaml.yaml_transformer import YamlTransformer
 from zs_yaml.convert import (
     yaml_to_bin,
     bin_to_yaml,
     yaml_to_json,
     json_to_yaml
     )
-
+from zs_yaml import get_version_info
 
 def parse_arguments():
     parser = argparse.ArgumentParser(
-        description='Convert between YAML, JSON, and binary formats.\n'
-        'To convert from binary to YAML, the target YAML file must already exist with metadata.\n'
-        'The metadata is required to identify the correct Python type for deserialization.\n'
+        formatter_class=argparse.RawTextHelpFormatter,
+
+        description=
+        f'%(prog)s {get_version_info()}\n\n'
+        'Converts between YAML, JSON, and binary formats. '
+        'To convert from binary to YAML, the target YAML file must already exist with metadata. '
+        'The metadata is required to identify the correct Python type for deserialization.\n\n'
         'The minimal metadata content in the target YAML file should be:\n'
         ' _meta:\n'
         ' schema_module: <module_name>\n'
         ' schema_type: <type_name>',
+
         usage='%(prog)s <input_path> [output_path]\n\n'
         'Example usage:\n'
         ' %(prog)s input.yaml output.bin\n'
@@ -30,6 +34,7 @@ def parse_arguments():
     )
     parser.add_argument('input_path', type=str, help='Path to the input file (YAML, JSON, or binary)')
     parser.add_argument('output_path', type=str, nargs='?', help='Path to the output file (YAML, JSON, or binary)')
+    parser.add_argument('--version', action='version', version=f'%(prog)s {get_version_info()}')
 
     if len(sys.argv) < 2:
         parser.print_help(sys.stderr)
