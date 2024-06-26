@@ -27,7 +27,7 @@ def read_requirements(fname):
 
 setup(
     name='zs_yaml',
-    version='0.1.0',
+    version='0.1.2',
     author="Navigation Data Standard e.V.",
     author_email="support@nds-association.org",
     description='A package that allows using yaml to define zserio objects.',

@@ -2,7 +2,7 @@
 
 *Your Easy Path to zserio Test Data*
 
-<img src="doc/zs-yaml.png" height="100">
+<img src="doc/zs-yaml.png" alt="" height="100">
 
 **zs-yaml** adds YAML as a text format to be used with zserio in order to improve the user experience when manually creating or analyzing test data for zserio.
 
