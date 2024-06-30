@@ -41,38 +41,24 @@ def _json_to_zs_bin(json_input_path, bin_output_path, module_name, type_name):
     zserio.serialize_to_file(zserio_object, bin_output_path)
 
 
-def yaml_to_json(yaml_input_path, json_output_path, transformer=None):
+def yaml_to_json(yaml_input_path, json_output_path):
     """
     Converts a YAML file to a JSON file.
 
     Args:
         yaml_input_path (str): Path to the input YAML file.
         json_output_path (str): Path to the output JSON file.
-        transformer (YamlTransformer, optional): YamlTransformer instance for applying
-            custom transformations. If not provided, a default instance will be used.
 
     Returns:
         dict: The _meta section from the YAML file, if present.
     """
-    if transformer is None:
-        transformer = YamlTransformer()
-
-    with open(yaml_input_path, 'r') as yaml_file:
-        data = yaml.safe_load(yaml_file)
-
-    meta = data.pop('_meta', {})
-    transformation_module = meta.get('transformation_module')
-
-    if transformation_module:
-        transformer.load_functions(transformation_module)
-
-    if transformer:
-        data = transformer.transform(data)
+    transformer = YamlTransformer(yaml_input_path)
+    json_data = transformer.to_json()
 
     with open(json_output_path, 'w') as json_file:
-        json.dump(data, json_file, indent=2)
+        json_file.write(json_data)
 
-    return meta
+    return transformer.get_meta()
 
 
 def json_to_yaml(json_input_path, yaml_output_path):
@@ -90,28 +76,29 @@ def json_to_yaml(json_input_path, yaml_output_path):
         yaml.safe_dump(data, yaml_file, default_flow_style=False, sort_keys=False)
 
 
-def yaml_to_bin(yaml_input_path, bin_output_path, transformer=None):
+def yaml_to_bin(yaml_input_path, bin_output_path):
     """
     Converts a YAML file to a binary file using Zserio serialization.
 
     Args:
         yaml_input_path (str): Path to the input YAML file.
         bin_output_path (str): Path to the output binary file.
-        transformer (YamlTransformer, optional): YamlTransformer instance for applying
-            custom transformations. If not provided, a default instance will be used.
 
     Raises:
         ValueError: If schema_module and schema_type are not specified in the _meta
             section of the YAML file.
     """
-    if transformer is None:
-        transformer = YamlTransformer()
+    transformer = YamlTransformer(yaml_input_path)
 
     with tempfile.NamedTemporaryFile(delete=False) as temp_json_file:
         temp_json_path = temp_json_file.name
 
     try:
-        meta = yaml_to_json(yaml_input_path, temp_json_path, transformer)
+        json_data = transformer.to_json()
+        with open(temp_json_path, 'w') as json_file:
+            json_file.write(json_data)
+
+        meta = transformer.get_meta()
         schema_module = meta.get('schema_module')
         schema_type = meta.get('schema_type')
 
