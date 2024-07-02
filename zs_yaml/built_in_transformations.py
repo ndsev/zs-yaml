@@ -1,20 +1,22 @@
 import json
 import importlib
 import zserio
+import yaml
 
-def insert_yaml_as_extern(file, transformer):
+def insert_yaml_as_extern(transformer, file, template_args=None):
     """
     Include external YAML by transforming it to JSON and using zserio.
-    The function reads an external YAML file specified by 'file', processes it,
-    and includes its binary stream in the resulting JSON output using the meta
-    information defined in the external YAML file.
+
+    Args:
+        transformer (YamlTransformer): The transformer instance.
+        file (str): Path to the external YAML file.
+        template_args (dict, optional): A dictionary of template arguments for placeholder replacement.
+
+    Returns:
+        dict: A dictionary containing the binary data and its bit size.
     """
     abs_path = transformer.resolve_path(file)
-
-    # Create a new transformer for the external file
-    external_transformer = transformer.__class__(abs_path)
-
-    # Process the external YAML file
+    external_transformer = transformer.__class__(abs_path, template_args)
     processed_data = external_transformer.transform()
     meta = external_transformer.get_meta()
 
@@ -40,20 +42,33 @@ def insert_yaml_as_extern(file, transformer):
 
     return data
 
-def insert_yaml(file, transformer):
+def insert_yaml(transformer, file, template_args=None):
     """
     Insert YAML content directly without converting to binary.
+
+    Args:
+        transformer (YamlTransformer): The transformer instance.
+        file (str): Path to the external YAML file.
+        template_args (dict, optional): A dictionary of template arguments for placeholder replacement.
+
+    Returns:
+        dict: The processed YAML data.
     """
     abs_path = transformer.resolve_path(file)
+    external_transformer = transformer.__class__(abs_path, template_args)
+    processed_data = external_transformer.transform()
+    return processed_data
 
-    # Create a new transformer for the external file
-    external_transformer = transformer.__class__(abs_path)
-
-    # Process the external YAML file
-    return external_transformer.transform()
-
-def repeat_node(node, count, transformer):
+def repeat_node(transformer, node, count):
     """
     Repeat a specific node n times and return as a list.
+
+    Args:
+        transformer (YamlTransformer): The transformer instance.
+        node: The node to be repeated.
+        count (int): The number of times to repeat the node.
+
+    Returns:
+        list: A list containing the repeated node.
     """
     return [node] * count

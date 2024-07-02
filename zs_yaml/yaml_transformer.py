@@ -1,9 +1,10 @@
 import importlib
 import importlib.util
+import json
 import os
 import yaml
-import json
 import zs_yaml.built_in_transformations
+from string import Template
 
 class YamlTransformer:
     """
@@ -11,12 +12,14 @@ class YamlTransformer:
     invocations of registered transformation functions.
     """
 
-    def __init__(self, yaml_file_path):
+    def __init__(self, yaml_file_path, template_args=None):
         self.yaml_file_path = yaml_file_path
         self.yaml_dir = os.path.dirname(os.path.abspath(yaml_file_path))
         self.transformations = {}
         self.load_functions(zs_yaml.built_in_transformations)
         self.meta = {}
+        self.template_args = template_args
+        self.yaml_data = None
 
     def _load_module_from_file(self, module_name, file_path):
         spec = importlib.util.spec_from_file_location(module_name, file_path)
@@ -56,30 +59,42 @@ class YamlTransformer:
                 args = data['_a']
                 if func and callable(func):
                     if isinstance(args, dict):
-                        return func(**args, transformer=self) if 'transformer' in func.__code__.co_varnames else func(**args)
+                        return func(self, **args)
                     else:
-                        return func(args, transformer=self) if 'transformer' in func.__code__.co_varnames else func(args)
+                        return func(self, args)
                 else:
                     raise ValueError(f"Function {data['_f']} not found or is not callable")
             else:
                 return {key: self.process(value) for key, value in data.items()}
         return data
 
-    def transform(self):
+    def load_yaml(self):
         with open(self.yaml_file_path, 'r') as yaml_file:
-            data = yaml.safe_load(yaml_file)
+            content = yaml_file.read()
 
-        self.meta = data.pop('_meta', {})
+        if self.template_args:
+            content = Template(content).safe_substitute(self.template_args)
+
+        self.yaml_data = yaml.safe_load(content)
+        self.meta = self.yaml_data.pop('_meta', {})
+
+    def transform(self):
+        if self.yaml_data is None:
+            self.load_yaml()
+
+        print(f"File: {self.yaml_file_path} METADATA: {self.meta}")
         transformation_module = self.meta.get('transformation_module')
 
         if transformation_module:
             self.load_functions(transformation_module)
 
-        return self.process(data)
+        return self.process(self.yaml_data)
 
     def to_json(self):
         processed_data = self.transform()
         return json.dumps(processed_data, indent=2)
 
     def get_meta(self):
+        if self.yaml_data is None:
+            self.load_yaml()
         return self.meta
