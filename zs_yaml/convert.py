@@ -40,6 +40,27 @@ def _json_to_zs_bin(json_input_path, bin_output_path, module_name, type_name):
     zserio_object = zserio.from_json_file(ImportedType, json_input_path)
     zserio.serialize_to_file(zserio_object, bin_output_path)
 
+def yaml_to_yaml(yaml_input_path, yaml_output_path=None):
+    """
+    Applies all transformations and template substitution to
+    the input YAML to come up with the output YAML.
+
+    Args:
+        yaml_input_path (str): Path to the input YAML file.
+        yaml_output_path (str): Path to the output YAML file.
+    """
+    transformer = YamlTransformer(yaml_input_path)
+    transformed_data = transformer.transform()
+    meta = transformer.get_meta()
+
+    if yaml_output_path:
+        output_data = {'_meta': meta}
+        output_data.update(transformed_data)
+        with open(yaml_output_path, 'w') as yaml_file:
+            yaml.dump(output_data, yaml_file, default_flow_style=False, sort_keys=False)
+
+    return transformed_data, meta
+
 
 def yaml_to_json(yaml_input_path, json_output_path):
     """
@@ -52,13 +73,12 @@ def yaml_to_json(yaml_input_path, json_output_path):
     Returns:
         dict: The _meta section from the YAML file, if present.
     """
-    transformer = YamlTransformer(yaml_input_path)
-    json_data = transformer.to_json()
+    transformed_data, meta = yaml_to_yaml(yaml_input_path)
 
     with open(json_output_path, 'w') as json_file:
-        json_file.write(json_data)
+        json.dump(transformed_data, json_file, indent=2)
 
-    return transformer.get_meta()
+    return meta
 
 
 def json_to_yaml(json_input_path, yaml_output_path):
@@ -88,17 +108,12 @@ def yaml_to_bin(yaml_input_path, bin_output_path):
         ValueError: If schema_module and schema_type are not specified in the _meta
             section of the YAML file.
     """
-    transformer = YamlTransformer(yaml_input_path)
-
-    with tempfile.NamedTemporaryFile(delete=False) as temp_json_file:
-        temp_json_path = temp_json_file.name
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as temp_json_file:
+            temp_json_path = temp_json_file.name
 
     try:
-        json_data = transformer.to_json()
-        with open(temp_json_path, 'w') as json_file:
-            json_file.write(json_data)
+        meta = yaml_to_json(yaml_input_path, temp_json_path)
 
-        meta = transformer.get_meta()
         schema_module = meta.get('schema_module')
         schema_type = meta.get('schema_type')
 
@@ -107,8 +122,7 @@ def yaml_to_bin(yaml_input_path, bin_output_path):
 
         _json_to_zs_bin(temp_json_path, bin_output_path, schema_module, schema_type)
     finally:
-        if os.path.exists(temp_json_path):
-            os.remove(temp_json_path)
+        os.remove(temp_json_path)
 
 
 def bin_to_yaml(bin_input_path, yaml_output_path):

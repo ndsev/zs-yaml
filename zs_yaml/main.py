@@ -6,7 +6,8 @@ from zs_yaml.convert import (
     yaml_to_bin,
     bin_to_yaml,
     yaml_to_json,
-    json_to_yaml
+    json_to_yaml,
+    yaml_to_yaml
     )
 from zs_yaml import get_version_info
 
@@ -53,6 +54,8 @@ def process_yaml_input(input_path, output_path):
         yaml_to_bin(input_path, output_path)
     elif output_extension == '.json':
         yaml_to_json(input_path, output_path)
+    elif output_extension == '.yaml' or output_extension == '.yml':
+        yaml_to_yaml(input_path, output_path)
     else:
         raise ValueError("Unsupported output file extension for YAML input")
 
