@@ -10,6 +10,7 @@ from zs_yaml.convert import (
     yaml_to_yaml
     )
 from zs_yaml import get_version_info
+import time
 
 def parse_arguments():
     parser = argparse.ArgumentParser(
@@ -54,15 +55,18 @@ def process_yaml_input(input_path, output_path):
         yaml_to_bin(input_path, output_path)
     elif output_extension == '.json':
         yaml_to_json(input_path, output_path)
-    elif output_extension == '.yaml' or output_extension == '.yml':
+    elif output_extension == '.yaml':
         yaml_to_yaml(input_path, output_path)
     else:
         raise ValueError("Unsupported output file extension for YAML input")
+
+    return output_path
 
 def process_binary_input(input_path, output_path):
     if not output_path:
         raise ValueError("Output path must be specified for binary input")
     bin_to_yaml(input_path, output_path)
+    return output_path
 
 def process_json_input(input_path, output_path):
     if not output_path:
@@ -76,26 +80,40 @@ def process_json_input(input_path, output_path):
     else:
         raise ValueError("Unsupported output file extension for JSON input")
 
+    return output_path
+
+def get_file_size(file_path):
+    return os.path.getsize(file_path)
+
+def print_summary(start_time, output_path):
+    end_time = time.time()
+    execution_time = end_time - start_time
+    output_size = get_file_size(output_path)
+    print(f"Generated {output_path} (size: {output_size/1024.0:.0f}KB) in {execution_time:.2f} seconds.")
+
 def main():
     args = parse_arguments()
 
     input_extension = os.path.splitext(args.input_path)[1].lower()
 
+    start_time = time.time()
+
     try:
         if input_extension == '.yaml':
-            process_yaml_input(args.input_path, args.output_path)
+            output_path = process_yaml_input(args.input_path, args.output_path)
         elif input_extension == '.bin' or input_extension == '':
-            process_binary_input(args.input_path, args.output_path)
+            output_path = process_binary_input(args.input_path, args.output_path)
         elif input_extension == '.json':
-            process_json_input(args.input_path, args.output_path)
+            output_path = process_json_input(args.input_path, args.output_path)
         else:
             raise ValueError("Unsupported input file extension")
+
+        print_summary(start_time, output_path)
+
     except Exception as e:
         print(f"Error processing file: {e}")
         traceback.print_exc()
         sys.exit(1)
-
-    print("Finished successfully :)")
 
 if __name__ == "__main__":
     main()
