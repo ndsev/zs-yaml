@@ -16,10 +16,36 @@ class YamlTransformer:
         self.yaml_file_path = yaml_file_path
         self.yaml_dir = os.path.dirname(os.path.abspath(yaml_file_path))
         self.transformations = {}
-        self.load_functions(zs_yaml.built_in_transformations)
+        self._load_functions(zs_yaml.built_in_transformations)
         self.meta = {}
         self.template_args = template_args
         self.yaml_data = None
+
+    def resolve_path(self, path):
+        if os.path.isabs(path):
+            return path
+        return os.path.normpath(os.path.join(self.yaml_dir, path))
+
+    def transform(self):
+        if self.yaml_data is None:
+            self._load_yaml()
+
+        print(f"File: {self.yaml_file_path} METADATA: {self.meta}")
+        transformation_module = self.meta.get('transformation_module')
+
+        if transformation_module:
+            self._load_functions(transformation_module)
+
+        return self._process(self.yaml_data)
+
+    def to_json(self):
+        processed_data = self.transform()
+        return json.dumps(processed_data, indent=2)
+
+    def get_meta(self):
+        if self.yaml_data is None:
+            self._load_yaml()
+        return self.meta
 
     def _load_module_from_file(self, module_name, file_path):
         spec = importlib.util.spec_from_file_location(module_name, file_path)
@@ -27,7 +53,7 @@ class YamlTransformer:
         spec.loader.exec_module(module)
         return module
 
-    def load_functions(self, transformation_module):
+    def _load_functions(self, transformation_module):
         if isinstance(transformation_module, str):
             if transformation_module.endswith('.py'):
                 abs_path = self.resolve_path(transformation_module)
@@ -37,25 +63,20 @@ class YamlTransformer:
 
         for name, func in vars(transformation_module).items():
             if callable(func):
-                self.register_function(name, func)
+                self._register_function(name, func)
 
-    def register_function(self, name, func):
+    def _register_function(self, name, func):
         self.transformations[name] = func
 
-    def get_function(self, name):
+    def _get_function(self, name):
         return self.transformations.get(name)
 
-    def resolve_path(self, path):
-        if os.path.isabs(path):
-            return path
-        return os.path.normpath(os.path.join(self.yaml_dir, path))
-
-    def process(self, data):
+    def _process(self, data):
         if isinstance(data, list):
-            return [self.process(item) for item in data]
+            return [self._process(item) for item in data]
         elif isinstance(data, dict):
             if '_f' in data and '_a' in data:
-                func = self.get_function(data['_f'])
+                func = self._get_function(data['_f'])
                 args = data['_a']
                 if func and callable(func):
                     if isinstance(args, dict):
@@ -65,10 +86,10 @@ class YamlTransformer:
                 else:
                     raise ValueError(f"Function {data['_f']} not found or is not callable")
             else:
-                return {key: self.process(value) for key, value in data.items()}
+                return {key: self._process(value) for key, value in data.items()}
         return data
 
-    def load_yaml(self):
+    def _load_yaml(self):
         with open(self.yaml_file_path, 'r') as yaml_file:
             content = yaml_file.read()
 
@@ -77,24 +98,3 @@ class YamlTransformer:
 
         self.yaml_data = yaml.safe_load(content)
         self.meta = self.yaml_data.pop('_meta', {})
-
-    def transform(self):
-        if self.yaml_data is None:
-            self.load_yaml()
-
-        print(f"File: {self.yaml_file_path} METADATA: {self.meta}")
-        transformation_module = self.meta.get('transformation_module')
-
-        if transformation_module:
-            self.load_functions(transformation_module)
-
-        return self.process(self.yaml_data)
-
-    def to_json(self):
-        processed_data = self.transform()
-        return json.dumps(processed_data, indent=2)
-
-    def get_meta(self):
-        if self.yaml_data is None:
-            self.load_yaml()
-        return self.meta
