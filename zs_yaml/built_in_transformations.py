@@ -2,6 +2,7 @@ import json
 import importlib
 import zserio
 import yaml
+import copy
 
 def insert_yaml_as_extern(transformer, file, template_args=None):
     """
@@ -71,4 +72,4 @@ def repeat_node(transformer, node, count):
     Returns:
         list: A list containing the repeated node.
     """
-    return [node] * count
+    return [copy.deepcopy(node) for _ in range(count)]
