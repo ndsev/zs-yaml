@@ -30,7 +30,6 @@ class YamlTransformer:
         if self.yaml_data is None:
             self._load_yaml()
 
-        print(f"File: {self.yaml_file_path} METADATA: {self.meta}")
         transformation_module = self.meta.get('transformation_module')
 
         if transformation_module:
