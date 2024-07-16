@@ -12,10 +12,13 @@ class YamlTransformer:
     invocations of registered transformation functions.
     """
 
-    def __init__(self, yaml_file_path, template_args=None):
+    # Class-level cache for loaded modules
+    _loaded_modules = {}
+
+    def __init__(self, yaml_file_path, template_args=None, initial_transformations=None):
         self.yaml_file_path = yaml_file_path
         self.yaml_dir = os.path.dirname(os.path.abspath(yaml_file_path))
-        self.transformations = {}
+        self.transformations = initial_transformations or {}
         self._load_functions(zs_yaml.built_in_transformations)
         self.meta = {}
         self.template_args = template_args
@@ -46,10 +49,16 @@ class YamlTransformer:
             self._load_yaml()
         return self.meta
 
-    def _load_module_from_file(self, module_name, file_path):
-        spec = importlib.util.spec_from_file_location(module_name, file_path)
+    @classmethod
+    def _load_module_from_file(cls, module_name, file_path):
+        abs_path = os.path.abspath(file_path)
+        if abs_path in cls._loaded_modules:
+            return cls._loaded_modules[abs_path]
+
+        spec = importlib.util.spec_from_file_location(module_name, abs_path)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
+        cls._loaded_modules[abs_path] = module
         return module
 
     def _load_functions(self, transformation_module):
@@ -65,7 +74,11 @@ class YamlTransformer:
                 self._register_function(name, func)
 
     def _register_function(self, name, func):
-        self.transformations[name] = func
+        if name in self.transformations:
+            if self.transformations[name] != func:
+                raise ValueError(f"Attempting to register a different function with an existing name: {name}")
+        else:
+            self.transformations[name] = func
 
     def _get_function(self, name):
         return self.transformations.get(name)

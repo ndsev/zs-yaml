@@ -17,7 +17,7 @@ def insert_yaml_as_extern(transformer, file, template_args=None):
         dict: A dictionary containing the binary data and its bit size.
     """
     abs_path = transformer.resolve_path(file)
-    external_transformer = transformer.__class__(abs_path, template_args)
+    external_transformer = transformer.__class__(abs_path, template_args, initial_transformations=transformer.transformations)
     processed_data = external_transformer.transform()
     meta = external_transformer.get_meta()
 
@@ -56,7 +56,7 @@ def insert_yaml(transformer, file, template_args=None):
         dict: The processed YAML data.
     """
     abs_path = transformer.resolve_path(file)
-    external_transformer = transformer.__class__(abs_path, template_args)
+    external_transformer = transformer.__class__(abs_path, template_args, initial_transformations=transformer.transformations)
     processed_data = external_transformer.transform()
     return processed_data
 
