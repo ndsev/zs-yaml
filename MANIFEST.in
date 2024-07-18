@@ -1,0 +1,26 @@
+# Explicitly include specific files from the root directory
+include README.md
+include requirements.txt
+include LICENSE
+
+# Include all Python files in the package directory and subdirectories
+recursive-include zs_yaml *.py
+
+# Include all documentation resources
+recursive-include docs *
+
+# Exclude cache directories
+prune **/__pycache__
+prune **/.cache
+
+# Exclude version control directories
+prune .git
+
+# Exclude test directories
+prune **/tests
+
+# Exclude development and IDE-specific files
+global-exclude .DS_Store
+global-exclude *.swp
+global-exclude .vscode
+global-exclude .idea

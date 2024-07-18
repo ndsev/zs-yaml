@@ -1,4 +1,8 @@
-<img src="doc/zs-yaml.png" height="100">
+# `zs-yaml`
+
+*Your Easy Path to zserio Test Data*
+
+<img src="doc/zs-yaml.png" alt="" height="100">
 
 **zs-yaml** adds YAML as a text format to be used with zserio in order to improve the user experience when manually creating or analyzing test data for zserio.
 
@@ -104,8 +108,7 @@ def normalize_date(date_str):
 After you have installed `zs-yaml`, call `zs-yaml` to convert your YAML file to a binary representation:
 
 ```sh
-# Install zs-yaml if not already installed,
-# there is not yet a pip package so follow the instructions below
+# Install zs-yaml if not already installed.
 
 # Create the binary representation from the YAML file
 zs-yaml person.yaml person.bin
@@ -113,12 +116,11 @@ zs-yaml person.yaml person.bin
 
 ## Installation
 
-You can install the package in development mode by cloning the repository and using `pip3`:
+Currently, the Python package is only available at test.pypi. Once the official release is available,
+you can install the package without specifying an index URL.
 
 ```bash
-git clone https://github.com/yourusername/zs-yaml.git
-cd zs-yaml
-pip3 install -e .
+python -m pip install --upgrade zs-yaml
 ```
 
 ## Usage
