@@ -108,8 +108,7 @@ def normalize_date(date_str):
 After you have installed `zs-yaml`, call `zs-yaml` to convert your YAML file to a binary representation:
 
 ```sh
-# Install zs-yaml if not already installed,
-# there is not yet a pip package so follow the instructions below
+# Install zs-yaml if not already installed.
 
 # Create the binary representation from the YAML file
 zs-yaml person.yaml person.bin
@@ -121,11 +120,7 @@ Currently, the Python package is only available at test.pypi. Once the official 
 you can install the package without specifying an index URL.
 
 ```bash
-python -m pip install \
-       --index-url https://test.pypi.org/simple/ \
-       --extra-index-url https://pypi.org/simple/ \
-       --upgrade \
-       zs-yaml
+python -m pip install --upgrade zs-yaml
 ```
 
 ## Usage
