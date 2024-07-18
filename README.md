@@ -4,11 +4,40 @@
 
 <img src="doc/zs-yaml.png" alt="" height="100">
 
-**zs-yaml** adds YAML as a text format to be used with zserio in order to improve the user experience when manually creating or analyzing test data for zserio.
+**zs-yaml** adds YAML as a text format to be used with [zserio](https://github.com/ndsev/zserio) in order to improve the user experience when manually creating or analyzing test data for specific zserio schemas.
 
 - **YAML Format**: Uses YAML's human-readable format instead of JSON as the primary format for editing, making data handling and transformation more intuitive and less cluttered.
 - **Metadata Inclusion**: Automatically includes metadata in the YAML, eliminating the need for users to manually identify the correct type when importing JSON data, ensuring seamless (de-)serialization.
 - **Custom Transformations**: Allows for hooking in custom transformations so that users can work with familiar formats (e.g., dates or coordinate representations) instead of thinking in unfamiliar formats.
+
+## Installation
+
+Install `zs-yaml` using pip:
+
+```bash
+python -m pip install --upgrade zs-yaml
+```
+
+## Usage
+
+The main entry point for the application is `zs-yaml`. It accepts arguments for specifying the input and output file paths. You can run the application as follows:
+
+```bash
+zs-yaml input.yaml output.bin
+zs-yaml input.bin output.yaml
+```
+
+### Notes
+
+- You have to use the exact same order of fields in the YAML as defined by the zserio schema, because zserio expects this.
+- When converting from binary to YAML, the target YAML file must already exist and contain the necessary metadata.
+- The minimal metadata content in the target YAML file should be:
+
+```yaml
+_meta:
+  schema_module: <module_name>
+  schema_type: <type_name>
+```
 
 ## Example
 
@@ -60,8 +89,9 @@ Using **zs-yaml**, you can define the same data in a more human-readable YAML fo
 ```yaml
 # 1) Metadata is used to specify the type needed for
 #    (de-)serialization and custom transform functions
-# 2) User are free to use their preferred date format
+# 2) Users are free to use their preferred date format
 #    for the birth data as the a normalization function
+#    (defined in the referenced `transformations.py`)
 #    get invoked.
 # 3) Yaml allows avoiding clutter and adding comments
 #    like this one :)
@@ -113,40 +143,6 @@ After you have installed `zs-yaml`, call `zs-yaml` to convert your YAML file to 
 # Create the binary representation from the YAML file
 zs-yaml person.yaml person.bin
 ```
-
-## Installation
-
-Currently, the Python package is only available at test.pypi. Once the official release is available,
-you can install the package without specifying an index URL.
-
-```bash
-python -m pip install --upgrade zs-yaml
-```
-
-## Usage
-
-The main entry point for the application is `main.py`. It accepts arguments for specifying the input and output file paths. You can run the application as follows:
-
-```bash
-zs-yaml input.yaml output.bin
-zs-yaml input.bin output.yaml
-```
-
-### Notes
-
-- You have to use the exact same order of field in the yaml as defined by the zserio schema, because zserio expects this
-- When converting from binary to YAML, the target YAML file must already exist and contain the necessary metadata.
-- The minimal metadata content in the target YAML file should be:
-
-```yaml
-_meta:
-  schema_module: <module_name>
-  schema_type: <type_name>
-```
-
-### Future Considerations
-
-In the future, we may consider using YAML tags for a more integrated approach to handling transformations directly within the YAML files, simplifying syntax and enhancing readability.
 
 ## Project Structure
 
