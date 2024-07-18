@@ -39,6 +39,44 @@ _meta:
   schema_type: <type_name>
 ```
 
+### Initialization Arguments
+
+Some Zserio types require additional arguments during initialization, either when deserializing from binary or when creating objects from JSON. To support these types, you can specify initialization arguments in the `_meta` section of your YAML file:
+
+```yaml
+_meta:
+  schema_module: <module_name>
+  schema_type: <type_name>
+  initialization_args:
+    - <arg1>
+    - <arg2>
+    # ... more arguments as needed
+```
+
+**Hint:** At the moment only plain values are supported, although zserio supports also compound values as args.
+Support for these may be added in the future.
+
+These arguments will be passed to the appropriate Zserio functions:
+- `zserio.deserialize_from_file()` when converting from binary to YAML
+- `zserio.from_json_file()` when converting from YAML to binary
+
+For example:
+
+```yaml
+_meta:
+  schema_module: my_schema
+  schema_type: MyType
+  initialization_args:
+    - 0xAB
+    - 42
+
+# ... rest of your YAML data
+```
+
+In this example, `0xAB` and `42` will be passed as additional arguments to the initialization functions.
+
+This feature ensures that types requiring additional initialization parameters can be properly handled in both directions of conversion (YAML to binary and binary to YAML).
+
 ## Example
 
 ### Zserio Schema Module Creation

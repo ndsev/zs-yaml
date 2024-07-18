@@ -109,18 +109,25 @@ def yaml_to_bin(yaml_input_path, bin_output_path):
             section of the YAML file.
     """
     with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as temp_json_file:
-            temp_json_path = temp_json_file.name
+        temp_json_path = temp_json_file.name
 
     try:
         meta = yaml_to_json(yaml_input_path, temp_json_path)
 
         schema_module = meta.get('schema_module')
         schema_type = meta.get('schema_type')
+        init_args = meta.get('initialization_args', [])
 
         if not schema_module or not schema_type:
             raise ValueError("Error: schema_module and schema_type must be specified in the _meta section for binary output")
 
-        _json_to_zs_bin(temp_json_path, bin_output_path, schema_module, schema_type)
+        module = importlib.import_module(schema_module)
+        ImportedType = getattr(module, schema_type)
+        if ImportedType is None:
+            raise ValueError(f"Type {schema_type} not found in module {schema_module}")
+
+        zserio_object = zserio.from_json_file(ImportedType, temp_json_path, *init_args)
+        zserio.serialize_to_file(zserio_object, bin_output_path)
     finally:
         os.remove(temp_json_path)
 
@@ -143,6 +150,8 @@ def bin_to_yaml(bin_input_path, yaml_output_path):
 
     schema_module = meta.get('_meta', {}).get('schema_module')
     schema_type = meta.get('_meta', {}).get('schema_type')
+    init_args = meta.get('_meta', {}).get('initialization_args', [])
+
     if not schema_module or not schema_type:
         raise ValueError("Error: schema_module and schema_type must be specified in the _meta section of the YAML file")
 
@@ -151,7 +160,7 @@ def bin_to_yaml(bin_input_path, yaml_output_path):
     if ImportedType is None:
         raise ValueError(f"Type {schema_type} not found in module {schema_module}")
 
-    zserio_object = zserio.deserialize_from_file(ImportedType, bin_input_path)
+    zserio_object = zserio.deserialize_from_file(ImportedType, bin_input_path, *init_args)
     json_data = zserio.to_json_string(zserio_object)
 
     data = json.loads(json_data)
