@@ -21,8 +21,14 @@ members:
         file: "work_experience.yaml"
         node_path: "john_doe"
     skills:
-      _f: insert_yaml
-      _a: "skills.yaml"
+      _f: repeat_node
+      _a:
+        count: 4
+        node:
+          _f: insert_yaml
+          _a:
+            file: "skills.yaml"
+            node_path: "[0]"
     hobbies:
       _f: insert_yaml
       _a:

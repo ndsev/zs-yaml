@@ -89,7 +89,7 @@ class YamlTransformer:
         elif isinstance(data, dict):
             if '_f' in data and '_a' in data:
                 func = self._get_function(data['_f'])
-                args = data['_a']
+                args = self._process(data['_a'])  # Process the arguments recursively
                 if func and callable(func):
                     if isinstance(args, dict):
                         return func(self, **args)
