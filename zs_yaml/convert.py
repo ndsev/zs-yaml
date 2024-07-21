@@ -49,17 +49,16 @@ def yaml_to_yaml(yaml_input_path, yaml_output_path=None):
         yaml_input_path (str): Path to the input YAML file.
         yaml_output_path (str): Path to the output YAML file.
     """
-    transformer = YamlTransformer(yaml_input_path)
-    transformed_data = transformer.transform()
+    transformer = YamlTransformer.get_or_create(yaml_input_path)
     meta = transformer.get_meta()
 
     if yaml_output_path:
         output_data = {'_meta': meta}
-        output_data.update(transformed_data)
+        output_data.update(transformer.data)
         with open(yaml_output_path, 'w') as yaml_file:
             yaml.dump(output_data, yaml_file, default_flow_style=False, sort_keys=False)
 
-    return transformed_data, meta
+    return transformer.data, meta
 
 
 def yaml_to_json(yaml_input_path, json_output_path):

@@ -1,10 +1,10 @@
-import json
-import importlib
-import zserio
-import yaml
-import copy
 from functools import reduce
+import copy
+import importlib
+import json
 import operator
+import os
+import zserio
 
 # Cache to store loaded YAML/JSON files
 _file_cache = {}
@@ -23,8 +23,8 @@ def insert_yaml_as_extern(transformer, file, template_args=None):
     """
     abs_path = transformer.resolve_path(file)
     external_transformer = transformer.__class__(abs_path, template_args, initial_transformations=transformer.transformations)
-    processed_data = external_transformer.transform()
-    meta = external_transformer.get_meta()
+    processed_data = external_transformer.data
+    meta = external_transformer.metadata
 
     schema_module = meta.get('schema_module')
     schema_type = meta.get('schema_type')
@@ -67,38 +67,17 @@ def insert_yaml(transformer, file, node_path='', template_args=None, cache_file=
     def get_from_dict(data_dict, map_list):
         return reduce(operator.getitem, map_list, data_dict)
 
-    def load_file(file_path):
-        if cache_file and file_path in _file_cache:
-            return _file_cache[file_path]
+    abs_path = os.path.abspath(os.path.join(os.path.dirname(transformer.yaml_file_path), file))
+    transformed_yaml = transformer.__class__.get_or_create(abs_path, template_args, transformer.transformations)
 
-        abs_path = transformer.resolve_path(file_path)
-        if file_path.lower().endswith(('.yaml', '.yml')):
-            with open(abs_path, 'r') as f:
-                content = f.read()
-                if template_args:
-                    content = Template(content).safe_substitute(template_args)
-                data = yaml.safe_load(content)
-        elif file_path.lower().endswith('.json'):
-            with open(abs_path, 'r') as f:
-                data = json.load(f)
-        else:
-            raise ValueError(f"Unsupported file format for {file_path}. Only YAML and JSON are supported.")
+    data = transformed_yaml.data
 
-        if cache_file:
-            _file_cache[file_path] = data
-
+    if not node_path:
         # Deep copy is not good from performance point of
         # view but it still avoids loading the file again and
         # again and the nodes don't appear as alias but are
         # are really copies when used multiple times
         return copy.deepcopy(data)
-
-    # Load the external data
-    external_data = load_file(file)
-
-    # If no specific node is requested, return the entire content
-    if not node_path:
-        return external_data
 
     # Parse the path and extract the node
     parsed_path = []
@@ -120,10 +99,9 @@ def insert_yaml(transformer, file, node_path='', template_args=None, cache_file=
             current_key += char
     if current_key:
         parsed_path.append(current_key)
-    print(f"parsed_path: {parsed_path}")
 
     try:
-        return get_from_dict(external_data, parsed_path)
+        return get_from_dict(data, parsed_path)
     except (KeyError, IndexError, TypeError):
         raise ValueError(f"Invalid path: {node_path} in file {file}")
 

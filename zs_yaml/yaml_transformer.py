@@ -1,53 +1,53 @@
+from string import Template
 import importlib
 import importlib.util
 import json
 import os
 import yaml
 import zs_yaml.built_in_transformations
-from string import Template
-
 class YamlTransformer:
     """
-    Encapsulates the transformation of yaml data using
-    invocations of registered transformation functions.
+    Encapsulates a transformed yaml and allows
+    accessing the transformed data, original data and metadata..
     """
 
-    # Class-level cache for loaded modules
+    # Class-level caches (modules and transformed yamls)
     _loaded_modules = {}
+    _transformed_yaml_cache = {}
 
     def __init__(self, yaml_file_path, template_args=None, initial_transformations=None):
-        self.yaml_file_path = yaml_file_path
-        self.yaml_dir = os.path.dirname(os.path.abspath(yaml_file_path))
+        self.yaml_file_path = os.path.abspath(yaml_file_path)
         self.transformations = initial_transformations or {}
         self._load_functions(zs_yaml.built_in_transformations)
-        self.meta = {}
-        self.template_args = template_args
-        self.yaml_data = None
+        self._load_and_transform(template_args)
+
+    def _load_and_transform(self, template_args):
+        with open(self.yaml_file_path, 'r') as yaml_file:
+            content = yaml_file.read()
+
+        if template_args:
+            content = Template(content).safe_substitute(template_args)
+
+        self.original_data = yaml.safe_load(content)
+        if ('_meta' in self.original_data):
+            self.metadata = self.original_data.pop('_meta', {})
+            transformation_module = self.metadata.get('transformation_module')
+            if transformation_module:
+                self._load_functions(transformation_module)
+        else:
+            self.metadata = None
+
+        self.data = self._process(self.original_data)
 
     def resolve_path(self, path):
-        if os.path.isabs(path):
-            return path
-        return os.path.normpath(os.path.join(self.yaml_dir, path))
-
-    def transform(self):
-        if self.yaml_data is None:
-            self._load_yaml()
-
-        transformation_module = self.meta.get('transformation_module')
-
-        if transformation_module:
-            self._load_functions(transformation_module)
-
-        return self._process(self.yaml_data)
+        yaml_dir = os.path.dirname(self.yaml_file_path)
+        return os.path.normpath(os.path.join(yaml_dir, path))
 
     def to_json(self):
-        processed_data = self.transform()
-        return json.dumps(processed_data, indent=2)
+        return json.dumps(self.data, indent=2)
 
     def get_meta(self):
-        if self.yaml_data is None:
-            self._load_yaml()
-        return self.meta
+        return self.metadata
 
     @classmethod
     def _load_module_from_file(cls, module_name, file_path):
@@ -101,12 +101,17 @@ class YamlTransformer:
                 return {key: self._process(value) for key, value in data.items()}
         return data
 
-    def _load_yaml(self):
-        with open(self.yaml_file_path, 'r') as yaml_file:
-            content = yaml_file.read()
+    @classmethod
+    def get_or_create(cls, yaml_file_path, template_args=None, initial_transformations=None):
+        abs_path = os.path.abspath(yaml_file_path)
+        cache_key = (abs_path, frozenset(template_args.items()) if template_args else None)
 
-        if self.template_args:
-            content = Template(content).safe_substitute(self.template_args)
+        cache = YamlTransformer._transformed_yaml_cache
+        if cache_key in cache:
+            print(f"YamlTransformer::Cache: Hit for {cache_key}")
+            return cache[cache_key]
 
-        self.yaml_data = yaml.safe_load(content)
-        self.meta = self.yaml_data.pop('_meta', {})
+        print(f"YamlTransformer::Cache: Miss for {cache_key}")
+        transformed_yaml = cls(abs_path, template_args, initial_transformations)
+        cache[cache_key] = transformed_yaml
+        return transformed_yaml
