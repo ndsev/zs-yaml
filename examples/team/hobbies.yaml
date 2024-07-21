@@ -1,0 +1,9 @@
+common:
+  - "Reading"
+  - "Traveling"
+  - "Photography"
+
+jane_smith:
+  - "Hiking"
+  - "Cooking"
+  - "Painting"
