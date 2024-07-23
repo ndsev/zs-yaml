@@ -56,7 +56,7 @@ def yaml_to_yaml(yaml_input_path, yaml_output_path=None):
         output_data = {'_meta': meta}
         output_data.update(transformer.data)
         with open(yaml_output_path, 'w') as yaml_file:
-            yaml.dump(output_data, yaml_file, default_flow_style=False, sort_keys=False)
+            yaml.dump(output_data, yaml_file, Dumper=yaml.CDumper, default_flow_style=False, sort_keys=False)
 
     return transformer.data, meta
 

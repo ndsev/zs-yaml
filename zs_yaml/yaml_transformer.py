@@ -28,7 +28,7 @@ class YamlTransformer:
         if template_args:
             content = Template(content).safe_substitute(template_args)
 
-        self.original_data = yaml.safe_load(content)
+        self.original_data = yaml.load(content, Loader=yaml.CLoader)
         if ('_meta' in self.original_data):
             self.metadata = self.original_data.pop('_meta', {})
             transformation_module = self.metadata.get('transformation_module')
