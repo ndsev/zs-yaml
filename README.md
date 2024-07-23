@@ -10,6 +10,24 @@
 - **Metadata Inclusion**: Automatically includes metadata in the YAML, eliminating the need for users to manually identify the correct type when importing JSON data, ensuring seamless (de-)serialization.
 - **Custom Transformations**: Allows for hooking in custom transformations so that users can work with familiar formats (e.g., dates or coordinate representations) instead of thinking in unfamiliar formats.
 
+## Design Principles
+
+1. **Transparency Over Magic**:
+   - Prioritize clear and understandable processes. For example, users can fully render the YAML to see the actual data conforming to the underlying zserio schema.
+   - This approach avoids black-box conversions, simplifying debugging and ensuring user confidence in the data.
+
+2. **Accessibility and Simplicity**:
+   - Make the tool easy to use and understand, even for beginners.
+   - Features are designed with simplicity in mind. For instance, we use string-only templates as one way to keep things straightforward.
+
+3. **Performance for Trusted Sources**:
+   - Optimize for performance, assuming trusted YAML sources.
+   - Faster processing is crucial for rapid iterations and maintaining workflow.
+
+4. **Flexibility Within Simplicity**:
+   - While maintaining a simple core, provide powerful features like YAML imports, built-in and custom transformations, and basic templating.
+   - This balance allows for adaptability to various use cases without compromising ease of use.
+
 ## Installation
 
 Install `zs-yaml` using pip:
