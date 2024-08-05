@@ -108,10 +108,8 @@ class YamlTransformer:
 
         cache = YamlTransformer._transformed_yaml_cache
         if cache_key in cache:
-            print(f"YamlTransformer::Cache: Hit for {cache_key}")
             return cache[cache_key]
 
-        print(f"YamlTransformer::Cache: Miss for {cache_key}")
         transformed_yaml = cls(abs_path, template_args, initial_transformations)
         cache[cache_key] = transformed_yaml
         return transformed_yaml
