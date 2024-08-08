@@ -4,7 +4,7 @@
 
 <img src="doc/zs-yaml.png" alt="" height="100">
 
-**zs-yaml** adds YAML as a text format to be used with [zserio](https://github.com/ndsev/zserio) in order to improve the user experience when manually creating or analyzing test data for specific zserio schemas.
+**zs-yaml** adds YAML as a text format to be used with zserio in order to improve the user experience when manually creating or analyzing test data for zserio.
 
 - **YAML Format**: Uses YAML's human-readable format instead of JSON as the primary format for editing, making data handling and transformation more intuitive and less cluttered.
 - **Metadata Inclusion**: Automatically includes metadata in the YAML, eliminating the need for users to manually identify the correct type when importing JSON data, ensuring seamless (de-)serialization.
