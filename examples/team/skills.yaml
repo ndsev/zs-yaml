@@ -1,0 +1,6 @@
+- name: "Python"
+  level: 9
+- name: "JavaScript"
+  level: 8
+- name: "Database Management"
+  level: 7

@@ -1,0 +1,61 @@
+_meta:
+  schema_module: team.api
+  schema_type: Team
+  transformation_module: "./custom_transformations.py"
+
+name: "Dream Team"
+
+members:
+  - name: "John Doe"
+    age:
+      _f: calculate_age
+      _a: "1990-05-15"
+    address:
+      _f: insert_yaml
+      _a:
+        file: "addresses.yaml"
+        node_path: "[0].detailed"
+    workExperience:
+      _f: insert_yaml
+      _a:
+        file: "work_experience.yaml"
+        node_path: "john_doe"
+    skills:
+      _f: repeat_node
+      _a:
+        count: 4
+        node:
+          _f: insert_yaml
+          _a:
+            file: "skills.yaml"
+            node_path: "[0]"
+    hobbies:
+      _f: insert_yaml
+      _a:
+        file: "hobbies.yaml"
+        node_path: "common"
+    bio: "Just some bio."
+
+  - name: "Jane Smith"
+    age:
+      _f: calculate_age
+      _a: "1988-09-23"
+    address:
+      _f: insert_yaml
+      _a:
+        file: "addresses.yaml"
+        node_path: "[1].detailed"
+    workExperience:
+      _f: insert_yaml
+      _a:
+        file: "work_experience.yaml"
+        node_path: "jane_smith"
+    skills:
+      _f: insert_yaml
+      _a: "skills.yaml"
+    hobbies:
+      _f: insert_yaml
+      _a:
+        file: "hobbies.yaml"
+        node_path: "jane_smith"
+    bio: "Another bio."

@@ -1,0 +1,15 @@
+john_doe:
+  - company: "Tech Corp"
+    position: "Senior Developer"
+    yearsWorked: 5
+  - company: "Startup Inc"
+    position: "Junior Developer"
+    yearsWorked: 2
+
+jane_smith:
+  - company: "Big Enterprise"
+    position: "Project Manager"
+    yearsWorked: 6
+  - company: "Small Business"
+    position: "Business Analyst"
+    yearsWorked: 4

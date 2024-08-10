@@ -10,6 +10,91 @@
 - **Metadata Inclusion**: Automatically includes metadata in the YAML, eliminating the need for users to manually identify the correct type when importing JSON data, ensuring seamless (de-)serialization.
 - **Custom Transformations**: Allows for hooking in custom transformations so that users can work with familiar formats (e.g., dates or coordinate representations) instead of thinking in unfamiliar formats.
 
+## Design Principles
+
+1. **Transparency Over Magic**:
+   - Prioritize clear and understandable processes. For example, users can fully render the YAML to see the actual data conforming to the underlying zserio schema.
+   - This approach avoids black-box conversions, simplifying debugging and ensuring user confidence in the data.
+
+2. **Accessibility and Simplicity**:
+   - Make the tool easy to use and understand, even for beginners.
+   - Features are designed with simplicity in mind. For instance, we use string-only templates as one way to keep things straightforward.
+
+3. **Performance for Trusted Sources**:
+   - Optimize for performance, assuming trusted YAML sources.
+   - Faster processing is crucial for rapid iterations and maintaining workflow.
+
+4. **Flexibility Within Simplicity**:
+   - While maintaining a simple core, provide powerful features like YAML imports, built-in and custom transformations, and basic templating.
+   - This balance allows for adaptability to various use cases without compromising ease of use.
+
+## Installation
+
+Install `zs-yaml` using pip:
+
+```bash
+python -m pip install --upgrade zs-yaml
+```
+
+## Usage
+
+The main entry point for the application is `zs-yaml`. It accepts arguments for specifying the input and output file paths. You can run the application as follows:
+
+```bash
+zs-yaml input.yaml output.bin
+zs-yaml input.bin output.yaml
+```
+
+### Notes
+
+- You have to use the exact same order of fields in the YAML as defined by the zserio schema, because zserio expects this.
+- When converting from binary to YAML, the target YAML file must already exist and contain the necessary metadata.
+- The minimal metadata content in the target YAML file should be:
+
+```yaml
+_meta:
+  schema_module: <module_name>
+  schema_type: <type_name>
+```
+
+### Initialization Arguments
+
+Some Zserio types require additional arguments during initialization, either when deserializing from binary or when creating objects from JSON. To support these types, you can specify initialization arguments in the `_meta` section of your YAML file:
+
+```yaml
+_meta:
+  schema_module: <module_name>
+  schema_type: <type_name>
+  initialization_args:
+    - <arg1>
+    - <arg2>
+    # ... more arguments as needed
+```
+
+**Hint:** At the moment only plain values are supported, although zserio supports also compound values as args.
+Support for these may be added in the future.
+
+These arguments will be passed to the appropriate Zserio functions:
+- `zserio.deserialize_from_file()` when converting from binary to YAML
+- `zserio.from_json_file()` when converting from YAML to binary
+
+For example:
+
+```yaml
+_meta:
+  schema_module: my_schema
+  schema_type: MyType
+  initialization_args:
+    - 0xAB
+    - 42
+
+# ... rest of your YAML data
+```
+
+In this example, `0xAB` and `42` will be passed as additional arguments to the initialization functions.
+
+This feature ensures that types requiring additional initialization parameters can be properly handled in both directions of conversion (YAML to binary and binary to YAML).
+
 ## Example
 
 ### Zserio Schema Module Creation
@@ -60,8 +145,9 @@ Using **zs-yaml**, you can define the same data in a more human-readable YAML fo
 ```yaml
 # 1) Metadata is used to specify the type needed for
 #    (de-)serialization and custom transform functions
-# 2) User are free to use their preferred date format
+# 2) Users are free to use their preferred date format
 #    for the birth data as the a normalization function
+#    (defined in the referenced `transformations.py`)
 #    get invoked.
 # 3) Yaml allows avoiding clutter and adding comments
 #    like this one :)
@@ -114,39 +200,18 @@ After you have installed `zs-yaml`, call `zs-yaml` to convert your YAML file to 
 zs-yaml person.yaml person.bin
 ```
 
-## Installation
+## Built-in Transformations
 
-Currently, the Python package is only available at test.pypi. Once the official release is available,
-you can install the package without specifying an index URL.
+zs-yaml comes with several built-in transformation functions that can be used in your YAML files. Here's a brief overview of the available functions:
 
-```bash
-python -m pip install --upgrade zs-yaml
-```
+- `insert_yaml_as_extern`: Includes external YAML content by transforming it to JSON and using zserio.
+- `insert_yaml`: Inserts YAML content directly from an external file.
+- `repeat_node`: Repeats a specific node a specified number of times.
+- `extract_extern_as_yaml`: Extracts binary data and saves it as an external YAML file.
 
-## Usage
+For more detailed information about these functions and their usage, please refer to the [built_in_transformations.py](https://github.com/ndsev/zs_yaml/blob/main/zs_yaml/built_in_transformations.py) source file.
 
-The main entry point for the application is `main.py`. It accepts arguments for specifying the input and output file paths. You can run the application as follows:
-
-```bash
-zs-yaml input.yaml output.bin
-zs-yaml input.bin output.yaml
-```
-
-### Notes
-
-- You have to use the exact same order of field in the yaml as defined by the zserio schema, because zserio expects this
-- When converting from binary to YAML, the target YAML file must already exist and contain the necessary metadata.
-- The minimal metadata content in the target YAML file should be:
-
-```yaml
-_meta:
-  schema_module: <module_name>
-  schema_type: <type_name>
-```
-
-### Future Considerations
-
-In the future, we may consider using YAML tags for a more integrated approach to handling transformations directly within the YAML files, simplifying syntax and enhancing readability.
+Note: We plan to implement automatic source documentation generation in a future release, which will provide more comprehensive information about these functions and their parameters.
 
 ## Project Structure
 

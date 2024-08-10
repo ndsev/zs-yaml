@@ -1,0 +1,14 @@
+
+- city_only: "New York"
+  detailed:
+    street: "123 Main St"
+    city: "New York"
+    country: "USA"
+    zipCode: 10001
+
+- city_only: "San Francisco"
+  detailed:
+    street: "456 Elm St"
+    city: "San Francisco"
+    country: "USA"
+    zipCode: 94102
