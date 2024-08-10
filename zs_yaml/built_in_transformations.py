@@ -5,6 +5,7 @@ import json
 import operator
 import os
 import zserio
+import yaml
 
 # Cache to store loaded YAML/JSON files
 _file_cache = {}
@@ -118,3 +119,64 @@ def repeat_node(transformer, node, count):
         list: A list containing the repeated node.
     """
     return [copy.deepcopy(node) for _ in range(count)]
+
+
+def extract_extern_as_yaml(transformer, buffer, bitSize, schema_module, schema_type, file_name):
+    """
+    Extract binary data and save as an external YAML file.
+
+    Note: This function contains some redundancy with the bin_to_yaml function
+    in zs_yaml.convert to avoid circular imports. If modifying this function,
+    please consider updating bin_to_yaml as well, and vice versa.
+
+    Args:
+        transformer (YamlTransformer): The transformer instance.
+        buffer (bytes): The binary data to be extracted.
+        bitSize (int): The size of the binary data in bits.
+        schema_module (str): The name of the schema module.
+        schema_type (str): The name of the schema type.
+        file_name (str): The name of the file to save the extracted data.
+
+    Returns:
+        dict: A reference to the extracted file.
+    """
+    # Ensure the output directory exists
+    output_dir = os.path.dirname(transformer.yaml_file_path)
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Generate the full path for the new file
+    yaml_file_path = os.path.join(output_dir, file_name)
+
+    # Extract binary data
+    buffer = bytes(buffer)
+
+    # Import the module and get the type
+    module = importlib.import_module(schema_module)
+    ImportedType = getattr(module, schema_type)
+
+    # Deserialize the binary data
+    zserio_object = zserio.deserialize_from_bytes(ImportedType, buffer)
+
+    # Convert to JSON, then to a Python dict
+    json_data = json.loads(zserio.to_json_string(zserio_object))
+
+    # Prepare the data to be written
+    data_to_write = {
+        '_meta': {
+            'schema_module': schema_module,
+            'schema_type': schema_type
+        },
+        **json_data
+    }
+
+    # Save the extracted data to the new file
+    with open(yaml_file_path, 'w') as f:
+        yaml.dump(data_to_write, f, default_flow_style=False, sort_keys=False)
+
+    # Return a reference to the extracted file
+    return {
+        '_f': 'insert_yaml_as_extern',
+        '_a': {
+            'file': file_name
+        }
+    }
