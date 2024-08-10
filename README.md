@@ -200,6 +200,19 @@ After you have installed `zs-yaml`, call `zs-yaml` to convert your YAML file to 
 zs-yaml person.yaml person.bin
 ```
 
+## Built-in Transformations
+
+zs-yaml comes with several built-in transformation functions that can be used in your YAML files. Here's a brief overview of the available functions:
+
+- `insert_yaml_as_extern`: Includes external YAML content by transforming it to JSON and using zserio.
+- `insert_yaml`: Inserts YAML content directly from an external file.
+- `repeat_node`: Repeats a specific node a specified number of times.
+- `extract_extern_as_yaml`: Extracts binary data and saves it as an external YAML file.
+
+For more detailed information about these functions and their usage, please refer to the [built_in_transformations.py](https://github.com/ndsev/zs_yaml/blob/main/zs_yaml/built_in_transformations.py) source file.
+
+Note: We plan to implement automatic source documentation generation in a future release, which will provide more comprehensive information about these functions and their parameters.
+
 ## Project Structure
 
 - `setup.py`: Script for setting up the project and installing dependencies.
