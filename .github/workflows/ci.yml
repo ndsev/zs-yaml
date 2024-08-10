@@ -1,5 +1,4 @@
 name: zs-yaml CI/CD
-
 on:
   push:
     branches:
@@ -11,7 +10,7 @@ on:
       - main
 
 jobs:
-  build-and-deploy:
+  test-build-and-deploy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
@@ -23,8 +22,25 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install setuptools wheel twine
+      - name: Install zs-yaml in dev mode
+        run: |
+          pip install -e .
+      - name: Generate schema API for team example
+        run: |
+          cd examples/team
+          zserio team.zs -withTypeInfoCode -python zs_gen_api
+          echo "PYTHONPATH=$PYTHONPATH:$PWD/zs_gen_api" >> $GITHUB_ENV
+      - name: Test team example transformation
+        run: |
+          cd examples/team
+          zs-yaml team1.yaml team1_test_out.bin
+          if [ $? -eq 0 ]; then
+            echo "Transformation successful"
+          else
+            echo "Transformation failed"
+            exit 1
+          fi
       - name: Set version
-        id: set_version
         run: |
           if [[ $GITHUB_REF == refs/tags/v* ]]; then
             VERSION=${GITHUB_REF#refs/tags/v}
@@ -34,15 +50,18 @@ jobs:
             VERSION=$(python setup.py --version).dev0
           fi
           echo "VERSION=${VERSION}" >> $GITHUB_ENV
+          echo "Extracted version: ${VERSION}"
           sed -i "s/__version__ = .*/__version__ = '${VERSION}'/" zs_yaml/_version.py
       - name: Build package
         run: |
           python setup.py sdist bdist_wheel
+      - name: Check distribution
+        run: |
+          twine check dist/*
       - name: Publish to PyPI
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.KE_PYPI_TOKEN }}
         run: |
-          twine check dist/*
           twine upload dist/*
