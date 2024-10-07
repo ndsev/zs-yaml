@@ -45,6 +45,20 @@ zs-yaml input.yaml output.bin
 zs-yaml input.bin output.yaml
 ```
 
+### Programmatic Usage
+
+In addition to the command-line interface, `zs-yaml` provides the conversion functions for use within Python scripts. In addition to the ones available to the CLI, there are also functions for programmatic use, e.g. `yaml_to_pyobj` for deserializing YAML files to Python objects:
+
+```python
+from zs_yaml.convert import yaml_to_pyobj
+
+# Convert a YAML file to a Python object
+# (instance of the zserio object defined by the schema)
+zserio_object = yaml_to_pyobj('input.yaml')
+
+# Use the zserio_object as needed in your application
+```
+
 ### Notes
 
 - You have to use the exact same order of fields in the YAML as defined by the zserio schema, because zserio expects this.
