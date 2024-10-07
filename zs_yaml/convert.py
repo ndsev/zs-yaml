@@ -20,25 +20,69 @@ import os
 
 from .yaml_transformer import YamlTransformer
 
-def _json_to_zs_bin(json_input_path, bin_output_path, module_name, type_name):
+def _yaml_to_zserio_object(yaml_input_path):
     """
-    Converts a JSON file to a binary file using Zserio serialization.
+    Converts a YAML file to a Zserio object.
 
     Args:
-        json_input_path (str): Path to the input JSON file.
-        bin_output_path (str): Path to the output binary file.
-        module_name (str): Name of the Zserio module containing the schema.
-        type_name (str): Name of the Zserio type to be used for serialization.
+        yaml_input_path (str): Path to the input YAML file.
+
+    Returns:
+        tuple: A tuple containing (zserio_object, temp_json_path, meta)
 
     Raises:
-        ValueError: If the specified Zserio type is not found in the module.
+        ValueError: If schema_module and schema_type are not specified in the _meta
+            section of the YAML file.
     """
-    module = importlib.import_module(module_name)
-    ImportedType = getattr(module, type_name)
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as temp_json_file:
+        temp_json_path = temp_json_file.name
+
+    meta = yaml_to_json(yaml_input_path, temp_json_path)
+
+    schema_module = meta.get('schema_module')
+    schema_type = meta.get('schema_type')
+    init_args = meta.get('initialization_args', [])
+
+    if not schema_module or not schema_type:
+        raise ValueError("Error: schema_module and schema_type must be specified in the _meta section")
+
+    module = importlib.import_module(schema_module)
+    ImportedType = getattr(module, schema_type)
     if ImportedType is None:
-        raise ValueError(f"Type {type_name} not found in module {module_name}")
-    zserio_object = zserio.from_json_file(ImportedType, json_input_path)
-    zserio.serialize_to_file(zserio_object, bin_output_path)
+        raise ValueError(f"Type {schema_type} not found in module {schema_module}")
+
+    zserio_object = zserio.from_json_file(ImportedType, temp_json_path, *init_args)
+    return zserio_object, temp_json_path, meta
+
+def yaml_to_bin(yaml_input_path, bin_output_path):
+    """
+    Converts a YAML file to a binary file using Zserio serialization.
+
+    Args:
+        yaml_input_path (str): Path to the input YAML file.
+        bin_output_path (str): Path to the output binary file.
+    """
+    try:
+        zserio_object, temp_json_path, _ = _yaml_to_zserio_object(yaml_input_path)
+        zserio.serialize_to_file(zserio_object, bin_output_path)
+    finally:
+        os.remove(temp_json_path)
+
+def yaml_to_pyobj(yaml_input_path):
+    """
+    Converts a YAML file to an in-memory Python object using Zserio deserialization.
+
+    Args:
+        yaml_input_path (str): Path to the input YAML file.
+
+    Returns:
+        object: The deserialized Python object.
+    """
+    try:
+        zserio_object, temp_json_path, _ = _yaml_to_zserio_object(yaml_input_path)
+        return zserio_object
+    finally:
+        os.remove(temp_json_path)
 
 def yaml_to_yaml(yaml_input_path, yaml_output_path=None):
     """
@@ -93,42 +137,6 @@ def json_to_yaml(json_input_path, yaml_output_path):
         data = json.load(json_file)
     with open(yaml_output_path, 'w') as yaml_file:
         yaml.safe_dump(data, yaml_file, default_flow_style=False, sort_keys=False)
-
-
-def yaml_to_bin(yaml_input_path, bin_output_path):
-    """
-    Converts a YAML file to a binary file using Zserio serialization.
-
-    Args:
-        yaml_input_path (str): Path to the input YAML file.
-        bin_output_path (str): Path to the output binary file.
-
-    Raises:
-        ValueError: If schema_module and schema_type are not specified in the _meta
-            section of the YAML file.
-    """
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as temp_json_file:
-        temp_json_path = temp_json_file.name
-
-    try:
-        meta = yaml_to_json(yaml_input_path, temp_json_path)
-
-        schema_module = meta.get('schema_module')
-        schema_type = meta.get('schema_type')
-        init_args = meta.get('initialization_args', [])
-
-        if not schema_module or not schema_type:
-            raise ValueError("Error: schema_module and schema_type must be specified in the _meta section for binary output")
-
-        module = importlib.import_module(schema_module)
-        ImportedType = getattr(module, schema_type)
-        if ImportedType is None:
-            raise ValueError(f"Type {schema_type} not found in module {schema_module}")
-
-        zserio_object = zserio.from_json_file(ImportedType, temp_json_path, *init_args)
-        zserio.serialize_to_file(zserio_object, bin_output_path)
-    finally:
-        os.remove(temp_json_path)
 
 
 def bin_to_yaml(bin_input_path, yaml_output_path):
