@@ -62,11 +62,13 @@ def yaml_to_bin(yaml_input_path, bin_output_path):
         yaml_input_path (str): Path to the input YAML file.
         bin_output_path (str): Path to the output binary file.
     """
+    temp_json_path = None
     try:
         zserio_object, temp_json_path, _ = _yaml_to_zserio_object(yaml_input_path)
         zserio.serialize_to_file(zserio_object, bin_output_path)
     finally:
-        os.remove(temp_json_path)
+        if temp_json_path is not None:
+            os.remove(temp_json_path)
 
 def yaml_to_pyobj(yaml_input_path):
     """
@@ -78,11 +80,13 @@ def yaml_to_pyobj(yaml_input_path):
     Returns:
         object: The deserialized Python object.
     """
+    temp_json_path = None
     try:
         zserio_object, temp_json_path, _ = _yaml_to_zserio_object(yaml_input_path)
         return zserio_object
     finally:
-        os.remove(temp_json_path)
+        if temp_json_path is not None:
+            os.remove(temp_json_path)
 
 def yaml_to_yaml(yaml_input_path, yaml_output_path=None):
     """
