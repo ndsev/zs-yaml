@@ -6,9 +6,29 @@ import operator
 import os
 import zserio
 import yaml
+import zlib
+import zstandard
+import lz4.frame
+import brotli
+from enum import Enum
 
 # Cache to store loaded YAML/JSON files
 _file_cache = {}
+
+class CompressionType(Enum):
+    NO_COMPRESSION = 0
+    ZLIB = 1
+    ZSTD = 2
+    LZ4 = 3
+    BROTLI = 4
+
+    @classmethod
+    def from_string(cls, value: str):
+        """Convert string representation to enum value, case-insensitive"""
+        try:
+            return cls[value.upper()]
+        except KeyError:
+            raise ValueError(f"Unknown compression type: {value}. Valid values are: {', '.join(cls.__members__.keys())}")
 
 def insert_yaml_as_extern(transformer, file, template_args=None):
     """
@@ -121,13 +141,9 @@ def repeat_node(transformer, node, count):
     return [copy.deepcopy(node) for _ in range(count)]
 
 
-def extract_extern_as_yaml(transformer, buffer, bitSize, schema_module, schema_type, file_name):
+def extract_extern_as_yaml(transformer, buffer, bitSize, schema_module, schema_type, file_name, compression_type=None):
     """
     Extract binary data and save as an external YAML file.
-
-    Note: This function contains some redundancy with the bin_to_yaml function
-    in zs_yaml.convert to avoid circular imports. If modifying this function,
-    please consider updating bin_to_yaml as well, and vice versa.
 
     Args:
         transformer (YamlTransformer): The transformer instance.
@@ -136,10 +152,22 @@ def extract_extern_as_yaml(transformer, buffer, bitSize, schema_module, schema_t
         schema_module (str): The name of the schema module.
         schema_type (str): The name of the schema type.
         file_name (str): The name of the file to save the extracted data.
+        compression_type (Union[CompressionType, str, int, None]): Type of compression used.
+                        Can be a CompressionType enum, string (e.g., 'zstd'), or integer value.
+                        Defaults to None (no compression).
 
     Returns:
         dict: A reference to the extracted file.
     """
+    # Convert compression_type to enum if needed
+    if compression_type is not None:
+        if isinstance(compression_type, str):
+            compression_type = CompressionType.from_string(compression_type)
+        elif isinstance(compression_type, int):
+            compression_type = CompressionType(compression_type)
+        elif not isinstance(compression_type, CompressionType):
+            raise ValueError("compression_type must be a CompressionType enum, string, or integer value")
+
     # Ensure the output directory exists
     output_dir = os.path.dirname(transformer.yaml_file_path)
     os.makedirs(output_dir, exist_ok=True)
@@ -147,8 +175,18 @@ def extract_extern_as_yaml(transformer, buffer, bitSize, schema_module, schema_t
     # Generate the full path for the new file
     yaml_file_path = os.path.join(output_dir, file_name)
 
-    # Extract binary data
+    # Extract and decompress binary data if needed
     buffer = bytes(buffer)
+    if compression_type is not None:
+        if compression_type == CompressionType.ZLIB:
+            buffer = zlib.decompress(buffer)
+        elif compression_type == CompressionType.ZSTD:
+            dctx = zstandard.ZstdDecompressor()
+            buffer = dctx.decompress(buffer)
+        elif compression_type == CompressionType.LZ4:
+            buffer = lz4.frame.decompress(buffer)
+        elif compression_type == CompressionType.BROTLI:
+            buffer = brotli.decompress(buffer)
 
     # Import the module and get the type
     module = importlib.import_module(schema_module)
@@ -169,9 +207,18 @@ def extract_extern_as_yaml(transformer, buffer, bitSize, schema_module, schema_t
         **json_data
     }
 
-    # Save the extracted data to the new file
+    # Remove all fields with null values recursively
+    def remove_nulls(d):
+        if isinstance(d, dict):
+            return {k: remove_nulls(v) for k, v in d.items() if v is not None}
+        elif isinstance(d, list):
+            return [remove_nulls(x) for x in d if x is not None]
+        return d
+
+    # Clean the data and save to file
+    cleaned_data = remove_nulls(data_to_write)
     with open(yaml_file_path, 'w') as f:
-        yaml.dump(data_to_write, f, default_flow_style=False, sort_keys=False)
+        yaml.dump(cleaned_data, f, default_flow_style=False, sort_keys=False)
 
     # Return a reference to the extracted file
     return {
