@@ -141,7 +141,7 @@ def repeat_node(transformer, node, count):
     return [copy.deepcopy(node) for _ in range(count)]
 
 
-def extract_extern_as_yaml(transformer, buffer, bitSize, schema_module, schema_type, file_name, compression_type=None):
+def extract_extern_as_yaml(transformer, buffer, bitSize, schema_module, schema_type, file_name, compression_type=0, remove_nulls=False):
     """
     Extract binary data and save as an external YAML file.
 
@@ -155,6 +155,7 @@ def extract_extern_as_yaml(transformer, buffer, bitSize, schema_module, schema_t
         compression_type (Union[CompressionType, str, int, None]): Type of compression used.
                         Can be a CompressionType enum, string (e.g., 'zstd'), or integer value.
                         Defaults to None (no compression).
+        remove_nulls (bool): Whether the extracted yaml should also contain fields with null values or not.
 
     Returns:
         dict: A reference to the extracted file.
@@ -207,18 +208,20 @@ def extract_extern_as_yaml(transformer, buffer, bitSize, schema_module, schema_t
         **json_data
     }
 
-    # Remove all fields with null values recursively
-    def remove_nulls(d):
-        if isinstance(d, dict):
-            return {k: remove_nulls(v) for k, v in d.items() if v is not None}
-        elif isinstance(d, list):
-            return [remove_nulls(x) for x in d if x is not None]
-        return d
+    # Clean the data if remove_nulls is True
+    if remove_nulls:
+        def rm_nulls(data):
+            """Remove null values from a dictionary recursively."""
+            if isinstance(data, dict):
+                return {k: rm_nulls(v) for k, v in data.items() if v is not None}
+            elif isinstance(data, list):
+                return [rm_nulls(item) for item in data if item is not None]
+            return data
 
-    # Clean the data and save to file
-    cleaned_data = remove_nulls(data_to_write)
+        data_to_write = rm_nulls(data_to_write)
+
     with open(yaml_file_path, 'w') as f:
-        yaml.dump(cleaned_data, f, default_flow_style=False, sort_keys=False)
+        yaml.dump(data_to_write, f, default_flow_style=False, sort_keys=False)
 
     # Return a reference to the extracted file
     return {
