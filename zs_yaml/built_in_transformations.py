@@ -230,3 +230,39 @@ def extract_extern_as_yaml(transformer, buffer, bitSize, schema_module, schema_t
             'file': file_name
         }
     }
+
+def py_eval(transformer, expr):
+    """
+    Safely evaluate a Python expression and return its result.
+
+    Args:
+        transformer (YamlTransformer): The transformer instance.
+        expr (str): The Python expression to evaluate.
+
+    Returns:
+        The result of the evaluated expression.
+
+    Example YAML usage:
+        my_array:
+          _f: py_eval
+          _a:
+            expr: "[i * 2 for i in range(5)]"
+    """
+    # Create a safe globals dict with limited builtins
+    safe_globals = {
+        'range': range,
+        'len': len,
+        'str': str,
+        'int': int,
+        'float': float,
+        'list': list,
+        'dict': dict,
+        'set': set,
+        'tuple': tuple,
+        'bool': bool,
+    }
+
+    try:
+        return eval(expr, safe_globals, {})
+    except Exception as e:
+        raise ValueError(f"Error evaluating Python expression: {str(e)}")
