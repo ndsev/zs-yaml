@@ -5,6 +5,18 @@ import json
 import os
 import yaml
 import zs_yaml.built_in_transformations
+
+
+class TransformationError(Exception):
+    """Exception raised during YAML transformation with file context."""
+    def __init__(self, message, file_path=None, original_error=None):
+        self.file_path = file_path
+        self.original_error = original_error
+        if file_path:
+            message = f"Error in file '{file_path}': {message}"
+        super().__init__(message)
+
+
 class YamlTransformer:
     """
     Encapsulates a transformed yaml and allows
@@ -22,13 +34,32 @@ class YamlTransformer:
         self._load_and_transform(template_args)
 
     def _load_and_transform(self, template_args):
-        with open(self.yaml_file_path, 'r') as yaml_file:
-            content = yaml_file.read()
+        try:
+            with open(self.yaml_file_path, 'r') as yaml_file:
+                content = yaml_file.read()
+        except Exception as e:
+            raise TransformationError(
+                f"Failed to read file: {e}",
+                file_path=self.yaml_file_path,
+                original_error=e
+            )
 
         if template_args:
             content = Template(content).safe_substitute(template_args)
 
-        self.original_data = yaml.load(content, Loader=yaml.CLoader)
+        try:
+            self.original_data = yaml.load(content, Loader=yaml.CLoader)
+        except yaml.YAMLError as e:
+            # Extract line/column info if available
+            line_info = ""
+            if hasattr(e, 'problem_mark') and e.problem_mark:
+                line_info = f" at line {e.problem_mark.line + 1}, column {e.problem_mark.column + 1}"
+            raise TransformationError(
+                f"YAML parsing error{line_info}: {e}",
+                file_path=self.yaml_file_path,
+                original_error=e
+            )
+        
         if ('_meta' in self.original_data):
             self.metadata = self.original_data.pop('_meta', {})
             transformation_module = self.metadata.get('transformation_module')
@@ -91,10 +122,21 @@ class YamlTransformer:
                 func = self._get_function(data['_f'])
                 args = self._process(data['_a'])  # Process the arguments recursively
                 if func and callable(func):
-                    if isinstance(args, dict):
-                        return func(self, **args)
-                    else:
-                        return func(self, args)
+                    try:
+                        if isinstance(args, dict):
+                            return func(self, **args)
+                        else:
+                            return func(self, args)
+                    except TransformationError:
+                        # Re-raise TransformationError as-is to preserve context
+                        raise
+                    except Exception as e:
+                        # Wrap other exceptions with context
+                        raise TransformationError(
+                            f"Error in transformation '{data['_f']}': {e}",
+                            file_path=self.yaml_file_path,
+                            original_error=e
+                        )
                 else:
                     raise ValueError(f"Function {data['_f']} not found or is not callable")
             else:
