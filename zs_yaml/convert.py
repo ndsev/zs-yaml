@@ -245,3 +245,41 @@ def bin_to_yaml(bin_input_path, yaml_output_path):
             file_path=bin_input_path,
             original_error=e
         )
+
+
+def pyobj_to_yaml(zserio_object, yaml_output_path):
+    """
+    Converts a zserio Python object to a YAML file.
+
+    Args:
+        zserio_object: The zserio Python object to convert.
+        yaml_output_path (str): Path to the output YAML file.
+
+    Raises:
+        TransformationError: If the conversion fails.
+    """
+    try:
+        # Extract schema information from the zserio object
+        schema_module = zserio_object.__class__.__module__
+        schema_type = zserio_object.__class__.__name__
+
+        # Convert the object to JSON
+        json_data = zserio.to_json_string(zserio_object)
+        data = json.loads(json_data)
+
+        # Create a new dictionary to ensure _meta comes first
+        final_data = {'_meta': {
+            'schema_module': schema_module,
+            'schema_type': schema_type
+        }}
+        final_data.update(data)
+
+        # Write to YAML file
+        with open(yaml_output_path, 'w') as yaml_file:
+            yaml.dump(final_data, yaml_file, Dumper=yaml.CDumper, default_flow_style=False, sort_keys=False)
+    except Exception as e:
+        raise TransformationError(
+            f"Failed to convert Python object to YAML: {e}",
+            file_path=yaml_output_path,
+            original_error=e
+        )
