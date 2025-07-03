@@ -50,6 +50,16 @@ jobs:
             echo "pyobj_to_yaml tests failed"
             exit 1
           fi
+      - name: Test all conversion functions
+        run: |
+          cd examples/team
+          python test_all_conversions.py
+          if [ $? -eq 0 ]; then
+            echo "All conversion tests successful"
+          else
+            echo "Conversion tests failed"
+            exit 1
+          fi
       - name: Set version
         run: |
           if [[ $GITHUB_REF == refs/tags/v* ]]; then
