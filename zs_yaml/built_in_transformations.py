@@ -42,8 +42,21 @@ def insert_yaml_as_extern(transformer, file, template_args=None):
     Returns:
         dict: A dictionary containing the binary data and its bit size.
     """
+    from .yaml_transformer import TransformationError
+    
     abs_path = transformer.resolve_path(file)
-    external_transformer = transformer.__class__(abs_path, template_args, initial_transformations=transformer.transformations)
+    try:
+        external_transformer = transformer.__class__(abs_path, template_args, initial_transformations=transformer.transformations)
+    except TransformationError:
+        # Re-raise as-is to preserve the file context
+        raise
+    except Exception as e:
+        raise TransformationError(
+            f"Failed to load external YAML: {e}",
+            file_path=abs_path,
+            original_error=e
+        )
+    
     processed_data = external_transformer.data
     meta = external_transformer.metadata
 
@@ -51,17 +64,37 @@ def insert_yaml_as_extern(transformer, file, template_args=None):
     schema_type = meta.get('schema_type')
 
     if not schema_module or not schema_type:
-        raise ValueError(f"Error: schema_module and schema_type must be specified in the _meta section of the YAML file: {file}")
+        raise TransformationError(
+            f"schema_module and schema_type must be specified in the _meta section",
+            file_path=abs_path
+        )
 
     json_string = json.dumps(processed_data)
 
     # Convert JSON to binary using zserio
-    module = importlib.import_module(schema_module)
-    ImportedType = getattr(module, schema_type)
-    zserio_object = zserio.from_json_string(ImportedType, json_string)
-    writer = zserio.BitStreamWriter()
-    zserio_object.write(writer)
-    bits = zserio.BitBuffer(writer.byte_array, writer.bitposition)
+    try:
+        module = importlib.import_module(schema_module)
+        ImportedType = getattr(module, schema_type)
+        zserio_object = zserio.from_json_string(ImportedType, json_string)
+    except Exception as e:
+        # Try to extract more specific error info
+        error_msg = str(e)
+        raise TransformationError(
+            f"Failed to create {schema_type} from {schema_module}: {error_msg}",
+            file_path=abs_path,
+            original_error=e
+        )
+    
+    try:
+        writer = zserio.BitStreamWriter()
+        zserio_object.write(writer)
+        bits = zserio.BitBuffer(writer.byte_array, writer.bitposition)
+    except Exception as e:
+        raise TransformationError(
+            f"Failed to serialize {schema_type}: {e}",
+            file_path=abs_path,
+            original_error=e
+        )
 
     # Encode the binary data
     encoded_bytes = list(bits.buffer)
@@ -85,11 +118,23 @@ def insert_yaml(transformer, file, node_path='', template_args=None, cache_file=
     Returns:
         The selected content from the external file.
     """
+    from .yaml_transformer import TransformationError
+    
     def get_from_dict(data_dict, map_list):
         return reduce(operator.getitem, map_list, data_dict)
 
     abs_path = os.path.abspath(os.path.join(os.path.dirname(transformer.yaml_file_path), file))
-    transformed_yaml = transformer.__class__.get_or_create(abs_path, template_args, transformer.transformations)
+    try:
+        transformed_yaml = transformer.__class__.get_or_create(abs_path, template_args, transformer.transformations)
+    except TransformationError:
+        # Re-raise as-is to preserve the file context
+        raise
+    except Exception as e:
+        raise TransformationError(
+            f"Failed to load external YAML: {e}",
+            file_path=abs_path,
+            original_error=e
+        )
 
     data = transformed_yaml.data
 
