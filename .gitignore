@@ -2,6 +2,9 @@
 __pycache__/
 *.py[cod]
 
+# Generated version file
+zs_yaml/_version.py
+
 # Distribution / packaging
 build/
 dist/

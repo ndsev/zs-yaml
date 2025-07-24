@@ -1,5 +1,0 @@
-PyYAML~=6.0
-zserio>=2.15.0,<3
-zstandard
-lz4
-brotli

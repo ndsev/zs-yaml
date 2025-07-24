@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=64", "setuptools-scm>=8"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "zs-yaml"
+dynamic = ["version"]
+description = "YAML support for zserio"
+readme = "README.md"
+requires-python = ">=3.8"
+license = "MIT"
+authors = [
+    {name = "Navigation Data Standard e.V.", email = "support@nds-association.org"},
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Build Tools",
+    "Topic :: Software Development :: Code Generators",
+]
+dependencies = [
+    "PyYAML~=6.0",
+    "zserio>=2.15.0,<3",
+    "zstandard",
+    "lz4",
+    "brotli",
+]
+
+[project.urls]
+Homepage = "https://github.com/ndsev/zs-yaml"
+Repository = "https://github.com/ndsev/zs-yaml"
+Issues = "https://github.com/ndsev/zs-yaml/issues"
+
+[project.scripts]
+zs-yaml = "zs_yaml.main:main"
+
+[tool.setuptools]
+packages = ["zs_yaml"]
+include-package-data = true
+
+[tool.setuptools.package-data]
+zs_yaml = ["../doc/*.png", "../doc/*.svg", "../README.md", "../LICENSE"]
+
+[tool.setuptools_scm]
+version_scheme = "no-guess-dev"
+local_scheme = "no-local-version"
+write_to = "zs_yaml/_version.py"
+fallback_version = "0.0.0"

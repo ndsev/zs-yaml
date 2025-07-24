@@ -230,8 +230,48 @@ Note: We plan to implement automatic source documentation generation in a future
 
 ## Project Structure
 
-- `setup.py`: Script for setting up the project and installing dependencies.
+- `pyproject.toml`: Modern Python project configuration file containing all package metadata and dependencies.
 - `zs_yaml/`: Directory containing the actual `zs-yaml` implementation.
+
+## Release Procedure
+
+This project uses automatic version management through `setuptools-scm`, which derives version numbers from git tags:
+
+### Version Numbering
+
+- **Tagged releases**: Git tags like `v0.8.1` produce clean version numbers: `0.8.1`
+- **Development versions**: Commits on main branch produce versions like `0.8.1.dev5` (5 commits after v0.8.0)
+
+### Creating a Release
+
+1. **Create a GitHub Release**:
+   - Go to the repository's "Releases" page on GitHub
+   - Click "Create a new release"
+   - Create a new tag (e.g., `v0.9.0`) targeting the main branch
+   - Add release notes describing the changes
+   - Publish the release
+
+2. **Automatic Publication**:
+   - GitHub Actions will automatically:
+     - Build the package with the correct version number
+     - Run all tests
+     - Publish to PyPI if tests pass
+
+### Manual Release (if needed)
+
+If you need to create a release locally:
+
+```bash
+# Ensure you're on main with latest changes
+git checkout main
+git pull
+
+# Create and push a tag
+git tag -a v0.9.0 -m "Release version 0.9.0"
+git push origin v0.9.0
+```
+
+The CI/CD pipeline will handle the rest automatically.
 
 ## Reference
 
