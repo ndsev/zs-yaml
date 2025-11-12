@@ -155,3 +155,14 @@ class YamlTransformer:
         transformed_yaml = cls(abs_path, template_args, initial_transformations)
         cache[cache_key] = transformed_yaml
         return transformed_yaml
+
+    @classmethod
+    def clear_cache(cls):
+        """Clear the entire transformer cache.
+
+        This should be called when YAML files or their output files (created by
+        transformations like extract_extern_as_yaml) are deleted or modified
+        externally. The cache assumes files are immutable during a session, so
+        external modifications require explicit cache invalidation.
+        """
+        cls._transformed_yaml_cache.clear()
