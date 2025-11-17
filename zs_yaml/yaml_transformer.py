@@ -47,6 +47,9 @@ class YamlTransformer:
         if template_args:
             content = Template(content).safe_substitute(template_args)
 
+        # Check if transformation is needed (optimization to skip _process if no function calls)
+        needs_transformation = "_f:" in content
+
         try:
             self.original_data = yaml.load(content, Loader=yaml.CLoader)
         except yaml.YAMLError as e:
@@ -68,7 +71,11 @@ class YamlTransformer:
         else:
             self.metadata = None
 
-        self.data = self._process(self.original_data)
+        # Skip transformation processing if no function calls detected
+        if needs_transformation:
+            self.data = self._process(self.original_data)
+        else:
+            self.data = self.original_data
 
     def resolve_path(self, path):
         yaml_dir = os.path.dirname(self.yaml_file_path)
