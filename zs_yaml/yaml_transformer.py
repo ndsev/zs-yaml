@@ -47,6 +47,9 @@ class YamlTransformer:
         if template_args:
             content = Template(content).safe_substitute(template_args)
 
+        # Check if transformation is needed (optimization to skip _process if no function calls)
+        needs_transformation = "_f:" in content
+
         try:
             self.original_data = yaml.load(content, Loader=yaml.CLoader)
         except yaml.YAMLError as e:
@@ -68,7 +71,11 @@ class YamlTransformer:
         else:
             self.metadata = None
 
-        self.data = self._process(self.original_data)
+        # Skip transformation processing if no function calls detected
+        if needs_transformation:
+            self.data = self._process(self.original_data)
+        else:
+            self.data = self.original_data
 
     def resolve_path(self, path):
         yaml_dir = os.path.dirname(self.yaml_file_path)
@@ -155,3 +162,14 @@ class YamlTransformer:
         transformed_yaml = cls(abs_path, template_args, initial_transformations)
         cache[cache_key] = transformed_yaml
         return transformed_yaml
+
+    @classmethod
+    def clear_cache(cls):
+        """Clear the entire transformer cache.
+
+        This should be called when YAML files or their output files (created by
+        transformations like extract_extern_as_yaml) are deleted or modified
+        externally. The cache assumes files are immutable during a session, so
+        external modifications require explicit cache invalidation.
+        """
+        cls._transformed_yaml_cache.clear()
