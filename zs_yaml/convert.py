@@ -199,6 +199,58 @@ def json_to_yaml(json_input_path, yaml_output_path):
         yaml.safe_dump(data, yaml_file, default_flow_style=False, sort_keys=False)
 
 
+def bin_to_dict(bin_input, schema_module, schema_type, init_args=None):
+    """
+    Converts binary data to a Python dictionary using Zserio deserialization.
+
+    Args:
+        bin_input (str or bytes): Path to the input binary file, or binary data as bytes.
+        schema_module (str): The schema module name (e.g., 'ndslive.schema.smart.v2024_11.tile.api').
+        schema_type (str): The schema type name (e.g., 'SmartLayerTile').
+        init_args (list, optional): Initialization arguments for zserio deserialization.
+
+    Returns:
+        tuple: (data_dict, metadata_dict) where data_dict is the deserialized data
+               and metadata_dict contains schema_module and schema_type.
+
+    Raises:
+        TransformationError: If deserialization fails.
+    """
+    if init_args is None:
+        init_args = []
+
+    try:
+        module = importlib.import_module(schema_module)
+        ImportedType = getattr(module, schema_type)
+        if ImportedType is None:
+            raise ValueError(f"Type {schema_type} not found in module {schema_module}")
+
+        # Handle both file path and bytes input
+        if isinstance(bin_input, bytes):
+            zserio_object = zserio.deserialize_from_bytes(ImportedType, bin_input, *init_args)
+        else:
+            zserio_object = zserio.deserialize_from_file(ImportedType, bin_input, *init_args)
+
+        json_data = zserio.to_json_string(zserio_object)
+        data = json.loads(json_data)
+
+        metadata = {
+            'schema_module': schema_module,
+            'schema_type': schema_type
+        }
+        if init_args:
+            metadata['initialization_args'] = init_args
+
+        return data, metadata
+    except Exception as e:
+        file_info = bin_input if isinstance(bin_input, str) else "<bytes>"
+        raise TransformationError(
+            f"Failed to convert binary to dict: {e}",
+            file_path=file_info,
+            original_error=e
+        )
+
+
 def bin_to_yaml(bin_input_path, yaml_output_path):
     """
     Converts a binary file to a YAML file using Zserio deserialization.
@@ -223,15 +275,7 @@ def bin_to_yaml(bin_input_path, yaml_output_path):
         if not schema_module or not schema_type:
             raise ValueError("Error: schema_module and schema_type must be specified in the _meta section of the YAML file")
 
-        module = importlib.import_module(schema_module)
-        ImportedType = getattr(module, schema_type)
-        if ImportedType is None:
-            raise ValueError(f"Type {schema_type} not found in module {schema_module}")
-
-        zserio_object = zserio.deserialize_from_file(ImportedType, bin_input_path, *init_args)
-        json_data = zserio.to_json_string(zserio_object)
-
-        data = json.loads(json_data)
+        data, metadata = bin_to_dict(bin_input_path, schema_module, schema_type, init_args)
 
         # Create a new dictionary to ensure _meta comes first
         final_data = {'_meta': meta['_meta']}
@@ -239,6 +283,8 @@ def bin_to_yaml(bin_input_path, yaml_output_path):
 
         with open(yaml_output_path, 'w') as yaml_file:
             yaml.safe_dump(final_data, yaml_file, default_flow_style=False, sort_keys=False)
+    except TransformationError:
+        raise
     except Exception as e:
         raise TransformationError(
             f"Failed to convert binary to YAML: {e}",
