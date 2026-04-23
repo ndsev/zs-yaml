@@ -1,0 +1,10 @@
+_meta:
+  schema_module: extern_compression.api
+  schema_type: Payload
+
+name: "test payload"
+value: 42
+tags:
+  - "alpha"
+  - "beta"
+  - "gamma"
