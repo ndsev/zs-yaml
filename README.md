@@ -218,10 +218,17 @@ zs-yaml person.yaml person.bin
 
 zs-yaml comes with several built-in transformation functions that can be used in your YAML files. Here's a brief overview of the available functions:
 
-- `insert_yaml_as_extern`: Includes external YAML content by transforming it to JSON and using zserio.
+- `insert_yaml_as_extern`: Includes external YAML content by transforming it to JSON and using zserio. Optionally compresses the produced bytes via `compression_type` (`zlib`, `zstd`, `lz4`, `brotli`; omit or set to `no_compression` for raw). Example:
+  ```yaml
+  data:
+    _f: insert_yaml_as_extern
+    _a:
+      file: payload.yaml
+      compression_type: zstd   # enum name, integer (0-4) or CompressionType member
+  ```
 - `insert_yaml`: Inserts YAML content directly from an external file.
 - `repeat_node`: Repeats a specific node a specified number of times.
-- `extract_extern_as_yaml`: Extracts binary data and saves it as an external YAML file.
+- `extract_extern_as_yaml`: Extracts binary data and saves it as an external YAML file. Accepts the same `compression_type` values as `insert_yaml_as_extern` and decompresses the buffer before deserialization.
 - `py_eval`: Allows to write small snippets like `myArray: {_f: py_eval, _a: "list(range(1, 100))"}` to generate the value for a yaml node.
 
 For more detailed information about these functions and their usage, please refer to the [built_in_transformations.py](https://github.com/ndsev/zs-yaml/blob/main/zs_yaml/built_in_transformations.py) source file.

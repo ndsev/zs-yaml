@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-04-23
+
+### Added
+- `insert_yaml_as_extern` supports compressing the produced extern bytes via a new `compression_type` argument (zlib, zstd, lz4, brotli). Fixes #19
+- `extern_compression` example schema plus `test_compression.py` covering unit and end-to-end round-trips for all compression types
+
+### Changed
+- `extract_extern_as_yaml` and `insert_yaml_as_extern` now share a single `_decompress` / `_compress` helper pair so new algorithms plug in one place
+- `extract_extern_as_yaml` default for `compression_type` aligned to `None` (was `0`); behavior is unchanged for all callers
+
 ## [0.8.3] - 2025-12-07
 
 ### Added
@@ -38,7 +48,7 @@ _Superseded by v0.8.3 - missing `bin_to_dict` export_
 
 ### Added
 - `py_eval` transformation function for generating node values via Python snippets
-- `extract_extern_as_yaml` supports compressed externals (gzip, zstd, lz4, brotli)
+- `extract_extern_as_yaml` supports compressed externals (zlib, zstd, lz4, brotli)
 - `extract_extern_as_yaml` supports generating YAMLs without null-value fields
 
 ## [0.6.1] - 2024-12-04
