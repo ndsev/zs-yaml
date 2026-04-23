@@ -19,6 +19,7 @@ import zserio
 from zserio.creator import ZserioTreeCreator
 from zserio.bitbuffer import BitBuffer
 from zserio.typeinfo import TypeAttribute
+from zserio.walker import Walker, WalkObserver
 
 from .yaml_transformer import YamlTransformer, TransformationError
 
@@ -151,6 +152,99 @@ def _dict_to_zserio_object(data, ImportedType, init_args):
     creator.begin_root()
     _walk_compound(creator, data)
     return creator.end_root()
+
+
+def _stringify_enum(value, type_info):
+    for item in type_info.attributes[TypeAttribute.ENUM_ITEMS]:
+        if item.py_item == value:
+            return item.schema_name
+    return f"{value.value} /* no match */"
+
+
+def _stringify_bitmask(value, type_info):
+    bitmask_value = value.value
+    parts = []
+    value_check = 0
+    for item_info in type_info.attributes[TypeAttribute.BITMASK_VALUES]:
+        item_value = item_info.py_item.value
+        is_zero = item_value == 0
+        if ((not is_zero and bitmask_value & item_value == item_value)
+                or (is_zero and bitmask_value == 0)):
+            value_check |= item_value
+            parts.append(item_info.schema_name)
+    if not parts:
+        return f"{bitmask_value} /* no match */"
+    joined = " | ".join(parts)
+    if bitmask_value != value_check:
+        return f"{bitmask_value} /* partial match: {joined} */"
+    return joined
+
+
+def _encode_value(value, type_info):
+    if value is None:
+        return None
+    schema_name = type_info.schema_name
+    if schema_name == "extern":
+        return {"buffer": list(value.buffer), "bitSize": value.bitsize}
+    if schema_name == "bytes":
+        return {"buffer": list(value)}
+    if TypeAttribute.ENUM_ITEMS in type_info.attributes:
+        return _stringify_enum(value, type_info)
+    if TypeAttribute.BITMASK_VALUES in type_info.attributes:
+        return _stringify_bitmask(value, type_info)
+    return value
+
+
+class _DictBuilder(WalkObserver):
+    """Walker observer that builds a plain dict mirroring zserio's JSON format."""
+
+    def __init__(self):
+        self._stack = []
+        self.result = None
+
+    def _place(self, member_info, container):
+        parent = self._stack[-1]
+        if isinstance(parent, list):
+            parent.append(container)
+        else:
+            parent[member_info.schema_name] = container
+
+    def begin_root(self, compound):
+        self.result = {}
+        self._stack.append(self.result)
+
+    def end_root(self, compound):
+        self._stack.pop()
+
+    def begin_array(self, array, member_info):
+        new_array = []
+        self._stack[-1][member_info.schema_name] = new_array
+        self._stack.append(new_array)
+
+    def end_array(self, array, member_info):
+        self._stack.pop()
+
+    def begin_compound(self, compound, member_info, element_index=None):
+        new_compound = {}
+        self._place(member_info, new_compound)
+        self._stack.append(new_compound)
+
+    def end_compound(self, compound, member_info, element_index=None):
+        self._stack.pop()
+
+    def visit_value(self, value, member_info, element_index=None):
+        encoded = _encode_value(value, member_info.type_info)
+        parent = self._stack[-1]
+        if isinstance(parent, list):
+            parent.append(encoded)
+        else:
+            parent[member_info.schema_name] = encoded
+
+
+def _zserio_object_to_dict(zserio_object):
+    builder = _DictBuilder()
+    Walker(builder).walk(zserio_object)
+    return builder.result
 
 
 def _yaml_to_zserio_object(yaml_input_path):
@@ -351,8 +445,7 @@ def bin_to_dict(bin_input, schema_module, schema_type, init_args=None):
         else:
             zserio_object = zserio.deserialize_from_file(ImportedType, bin_input, *init_args)
 
-        json_data = zserio.to_json_string(zserio_object)
-        data = json.loads(json_data)
+        data = _zserio_object_to_dict(zserio_object)
 
         metadata = {
             'schema_module': schema_module,
@@ -429,9 +522,7 @@ def pyobj_to_yaml(zserio_object, yaml_output_path):
         schema_module = zserio_object.__class__.__module__
         schema_type = zserio_object.__class__.__name__
 
-        # Convert the object to JSON
-        json_data = zserio.to_json_string(zserio_object)
-        data = json.loads(json_data)
+        data = _zserio_object_to_dict(zserio_object)
 
         # Create a new dictionary to ensure _meta comes first
         final_data = {'_meta': {
