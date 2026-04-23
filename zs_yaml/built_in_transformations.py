@@ -30,7 +30,48 @@ class CompressionType(Enum):
         except KeyError:
             raise ValueError(f"Unknown compression type: {value}. Valid values are: {', '.join(cls.__members__.keys())}")
 
-def insert_yaml_as_extern(transformer, file, template_args=None):
+def _compress(data: bytes, compression_type: 'CompressionType') -> bytes:
+    """Compress data using the specified compression algorithm."""
+    if compression_type == CompressionType.ZLIB:
+        return zlib.compress(data)
+    elif compression_type == CompressionType.ZSTD:
+        cctx = zstandard.ZstdCompressor()
+        return cctx.compress(data)
+    elif compression_type == CompressionType.LZ4:
+        return lz4.frame.compress(data)
+    elif compression_type == CompressionType.BROTLI:
+        return brotli.compress(data)
+    return data
+
+
+def _decompress(data: bytes, compression_type: 'CompressionType') -> bytes:
+    """Decompress data using the specified compression algorithm."""
+    if compression_type == CompressionType.ZLIB:
+        return zlib.decompress(data)
+    elif compression_type == CompressionType.ZSTD:
+        dctx = zstandard.ZstdDecompressor()
+        return dctx.decompress(data)
+    elif compression_type == CompressionType.LZ4:
+        return lz4.frame.decompress(data)
+    elif compression_type == CompressionType.BROTLI:
+        return brotli.decompress(data)
+    return data
+
+
+def _resolve_compression_type(compression_type):
+    """Normalize a user-provided compression_type (enum/str/int/None) to a CompressionType or None."""
+    if compression_type is None:
+        return None
+    if isinstance(compression_type, CompressionType):
+        return compression_type
+    if isinstance(compression_type, str):
+        return CompressionType.from_string(compression_type)
+    if isinstance(compression_type, int):
+        return CompressionType(compression_type)
+    raise ValueError("compression_type must be a CompressionType enum, string, or integer value")
+
+
+def insert_yaml_as_extern(transformer, file, template_args=None, compression_type=None):
     """
     Include external YAML by transforming it to JSON and using zserio.
 
@@ -38,12 +79,17 @@ def insert_yaml_as_extern(transformer, file, template_args=None):
         transformer (YamlTransformer): The transformer instance.
         file (str): Path to the external YAML file.
         template_args (dict, optional): A dictionary of template arguments for placeholder replacement.
+        compression_type (Union[CompressionType, str, int, None]): Compression to apply
+            after serialization. Can be a CompressionType enum, string, or integer.
+            Defaults to None (no compression).
 
     Returns:
         dict: A dictionary containing the binary data and its bit size.
     """
     from .yaml_transformer import TransformationError
-    
+
+    ct_enum = _resolve_compression_type(compression_type)
+
     abs_path = transformer.resolve_path(file)
     try:
         external_transformer = transformer.__class__(abs_path, template_args, initial_transformations=transformer.transformations)
@@ -56,7 +102,7 @@ def insert_yaml_as_extern(transformer, file, template_args=None):
             file_path=abs_path,
             original_error=e
         )
-    
+
     processed_data = external_transformer.data
     meta = external_transformer.metadata
 
@@ -84,11 +130,10 @@ def insert_yaml_as_extern(transformer, file, template_args=None):
             file_path=abs_path,
             original_error=e
         )
-    
+
     try:
         writer = zserio.BitStreamWriter()
         zserio_object.write(writer)
-        bits = zserio.BitBuffer(writer.byte_array, writer.bitposition)
     except Exception as e:
         raise TransformationError(
             f"Failed to serialize {schema_type}: {e}",
@@ -96,11 +141,18 @@ def insert_yaml_as_extern(transformer, file, template_args=None):
             original_error=e
         )
 
-    # Encode the binary data
-    encoded_bytes = list(bits.buffer)
-    data = {"buffer": encoded_bytes, "bitSize": bits.bitsize}
+    # Apply compression if requested
+    if ct_enum is not None and ct_enum != CompressionType.NO_COMPRESSION:
+        raw_bytes = bytes(writer.byte_array)
+        compressed = _compress(raw_bytes, ct_enum)
+        encoded_bytes = list(compressed)
+        bit_size = len(compressed) * 8
+    else:
+        bits = zserio.BitBuffer(writer.byte_array, writer.bitposition)
+        encoded_bytes = list(bits.buffer)
+        bit_size = bits.bitsize
 
-    return data
+    return {"buffer": encoded_bytes, "bitSize": bit_size}
 
 def insert_yaml(transformer, file, node_path='', template_args=None, cache_file=True):
     """
@@ -186,7 +238,7 @@ def repeat_node(transformer, node, count):
     return [copy.deepcopy(node) for _ in range(count)]
 
 
-def extract_extern_as_yaml(transformer, buffer, bitSize, schema_module, schema_type, file_name, compression_type=0, remove_nulls=False):
+def extract_extern_as_yaml(transformer, buffer, bitSize, schema_module, schema_type, file_name, compression_type=None, remove_nulls=False):
     """
     Extract binary data and save as an external YAML file.
 
@@ -205,14 +257,7 @@ def extract_extern_as_yaml(transformer, buffer, bitSize, schema_module, schema_t
     Returns:
         dict: A reference to the extracted file.
     """
-    # Convert compression_type to enum if needed
-    if compression_type is not None:
-        if isinstance(compression_type, str):
-            compression_type = CompressionType.from_string(compression_type)
-        elif isinstance(compression_type, int):
-            compression_type = CompressionType(compression_type)
-        elif not isinstance(compression_type, CompressionType):
-            raise ValueError("compression_type must be a CompressionType enum, string, or integer value")
+    compression_type = _resolve_compression_type(compression_type)
 
     # Ensure the output directory exists
     output_dir = os.path.dirname(transformer.yaml_file_path)
@@ -224,15 +269,7 @@ def extract_extern_as_yaml(transformer, buffer, bitSize, schema_module, schema_t
     # Extract and decompress binary data if needed
     buffer = bytes(buffer)
     if compression_type is not None:
-        if compression_type == CompressionType.ZLIB:
-            buffer = zlib.decompress(buffer)
-        elif compression_type == CompressionType.ZSTD:
-            dctx = zstandard.ZstdDecompressor()
-            buffer = dctx.decompress(buffer)
-        elif compression_type == CompressionType.LZ4:
-            buffer = lz4.frame.decompress(buffer)
-        elif compression_type == CompressionType.BROTLI:
-            buffer = brotli.decompress(buffer)
+        buffer = _decompress(buffer, compression_type)
 
     # Import the module and get the type
     module = importlib.import_module(schema_module)
@@ -269,12 +306,16 @@ def extract_extern_as_yaml(transformer, buffer, bitSize, schema_module, schema_t
         yaml.dump(data_to_write, f, default_flow_style=False, sort_keys=False)
 
     # Return a reference to the extracted file
-    return {
+    ref = {
         '_f': 'insert_yaml_as_extern',
         '_a': {
             'file': file_name
         }
     }
+    # Propagate compression type so insert_yaml_as_extern re-compresses
+    if compression_type is not None and compression_type != CompressionType.NO_COMPRESSION:
+        ref['_a']['compression_type'] = compression_type.value
+    return ref
 
 def py_eval(transformer, expr):
     """

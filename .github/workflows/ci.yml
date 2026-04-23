@@ -63,6 +63,20 @@ jobs:
             echo "Conversion tests failed"
             exit 1
           fi
+      - name: Generate schema API for extern_compression example
+        run: |
+          cd examples/extern_compression
+          zserio extern_compression.zs -withTypeInfoCode -python zs_gen_api
+      - name: Test extern compression
+        run: |
+          cd examples/extern_compression
+          PYTHONPATH="$PWD/zs_gen_api" python test_compression.py
+          if [ $? -eq 0 ]; then
+            echo "Compression tests successful"
+          else
+            echo "Compression tests failed"
+            exit 1
+          fi
       - name: Build package
         run: |
           python -m build
