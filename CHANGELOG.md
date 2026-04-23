@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- `yaml_to_bin` / `yaml_to_pyobj` now drive `ZserioTreeCreator` directly from the transformed dict, skipping the intermediate JSON round-trip. Output is byte-identical; ~3.5-4x faster end-to-end on large inputs. Fixes #21
+
+### Added
+- `examples/perf` harness (`perf.zs`, `generate_perf_yaml.py`, `benchmark.py`) for performance regression testing of `yaml_to_bin`
+
 ## [0.9.0] - 2026-04-23
 
 ### Added

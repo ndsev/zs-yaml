@@ -15,10 +15,143 @@ import yaml
 import json
 import importlib
 import zserio
-import tempfile
-import os
+
+from zserio.creator import ZserioTreeCreator
+from zserio.bitbuffer import BitBuffer
+from zserio.typeinfo import TypeAttribute
 
 from .yaml_transformer import YamlTransformer, TransformationError
+
+
+def _parse_enum_string_value(string_value, type_info):
+    for item_info in type_info.attributes[TypeAttribute.ENUM_ITEMS]:
+        if string_value == item_info.schema_name:
+            return item_info.py_item
+    return None
+
+
+def _parse_bitmask_string_value(string_value, type_info):
+    value = 0
+    for identifier_with_spaces in string_value.split('|'):
+        identifier = identifier_with_spaces.strip()
+        match = False
+        for item_info in type_info.attributes[TypeAttribute.BITMASK_VALUES]:
+            if identifier == item_info.schema_name:
+                match = True
+                value |= item_info.py_item.value
+                break
+        if not match:
+            return None
+    return value
+
+
+def _parse_bitmask_numeric_string_value(string_value):
+    number_len = 1
+    while number_len < len(string_value) and '0' <= string_value[number_len] <= '9':
+        number_len += 1
+    return int(string_value[0:number_len])
+
+
+def _enum_from_string(string_value, type_info):
+    if string_value:
+        first_char = string_value[0]
+        if ('A' <= first_char <= 'Z') or ('a' <= first_char <= 'z') or first_char == '_':
+            py_item = _parse_enum_string_value(string_value, type_info)
+            if py_item is not None:
+                return py_item
+    raise ValueError(f"Cannot create enum '{type_info.schema_name}' from string value '{string_value}'")
+
+
+def _bitmask_from_string(string_value, type_info):
+    if string_value:
+        first_char = string_value[0]
+        if ('A' <= first_char <= 'Z') or ('a' <= first_char <= 'z') or first_char == '_':
+            value = _parse_bitmask_string_value(string_value, type_info)
+            if value is not None:
+                return type_info.py_type.from_value(value)
+        elif '0' <= first_char <= '9':
+            value = _parse_bitmask_numeric_string_value(string_value)
+            if value is not None:
+                return type_info.py_type.from_value(value)
+    raise ValueError(f"Cannot create bitmask '{type_info.schema_name}' from string value '{string_value}'")
+
+
+def _convert_scalar(value, type_info):
+    if value is None:
+        return None
+    if TypeAttribute.ENUM_ITEMS in type_info.attributes:
+        if isinstance(value, str):
+            return _enum_from_string(value, type_info)
+        return type_info.py_type(value)
+    if TypeAttribute.BITMASK_VALUES in type_info.attributes:
+        if isinstance(value, str):
+            return _bitmask_from_string(value, type_info)
+        return type_info.py_type.from_value(value)
+    return value
+
+
+def _bitbuffer_from_dict(value):
+    buffer = value.get('buffer', [])
+    bit_size = value.get('bitSize', len(buffer) * 8)
+    return BitBuffer(bytes(buffer), bit_size)
+
+
+def _bytes_from_dict(value):
+    return bytearray(value.get('buffer', []))
+
+
+def _build_object_value(schema_name, value):
+    if schema_name == "extern":
+        return _bitbuffer_from_dict(value)
+    if schema_name == "bytes":
+        return _bytes_from_dict(value)
+    return None
+
+
+def _walk_compound(creator, data):
+    for key, value in data.items():
+        field_type = creator.get_field_type(key)
+        schema_name = field_type.schema_name
+        if isinstance(value, dict):
+            object_value = _build_object_value(schema_name, value)
+            if object_value is not None:
+                creator.set_value(key, object_value)
+            else:
+                creator.begin_compound(key)
+                _walk_compound(creator, value)
+                creator.end_compound()
+        elif isinstance(value, list):
+            creator.begin_array(key)
+            _walk_array(creator, value)
+            creator.end_array()
+        else:
+            creator.set_value(key, _convert_scalar(value, field_type))
+
+
+def _walk_array(creator, items):
+    element_type = creator.get_element_type()
+    schema_name = element_type.schema_name
+    for item in items:
+        if isinstance(item, dict):
+            object_value = _build_object_value(schema_name, item)
+            if object_value is not None:
+                creator.add_value_element(object_value)
+            else:
+                creator.begin_compound_element()
+                _walk_compound(creator, item)
+                creator.end_compound_element()
+        elif isinstance(item, list):
+            raise ValueError("Nested arrays are not supported by zserio")
+        else:
+            creator.add_value_element(_convert_scalar(item, element_type))
+
+
+def _dict_to_zserio_object(data, ImportedType, init_args):
+    creator = ZserioTreeCreator(ImportedType.type_info(), *init_args)
+    creator.begin_root()
+    _walk_compound(creator, data)
+    return creator.end_root()
+
 
 def _yaml_to_zserio_object(yaml_input_path):
     """
@@ -28,19 +161,16 @@ def _yaml_to_zserio_object(yaml_input_path):
         yaml_input_path (str): Path to the input YAML file.
 
     Returns:
-        tuple: A tuple containing (zserio_object, temp_json_path, meta)
+        tuple: A tuple containing (zserio_object, meta)
 
     Raises:
         ValueError: If schema_module and schema_type are not specified in the _meta
             section of the YAML file.
     """
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as temp_json_file:
-        temp_json_path = temp_json_file.name
-
     try:
-        meta = yaml_to_json(yaml_input_path, temp_json_path)
+        transformed_data, meta = yaml_to_yaml(yaml_input_path)
     except TransformationError:
-        raise  # Already has file context, just re-raise
+        raise
     except Exception as e:
         raise TransformationError(
             f"Failed to process YAML file: {e}",
@@ -61,16 +191,13 @@ def _yaml_to_zserio_object(yaml_input_path):
         if ImportedType is None:
             raise ValueError(f"Type {schema_type} not found in module {schema_module}")
 
-        zserio_object = zserio.from_json_file(ImportedType, temp_json_path, *init_args)
-        return zserio_object, temp_json_path, meta
+        zserio_object = _dict_to_zserio_object(transformed_data, ImportedType, init_args)
+        return zserio_object, meta
     except TransformationError:
-        raise  # Already has file context, just re-raise
+        raise
     except Exception as e:
-        # Check if this is a zserio error that might already have file context
         error_msg = str(e)
         if hasattr(e, 'file_path') and e.file_path:
-            # This error already has file context from an included file
-            # Strip redundant "Error in file '...':" prefix if present
             file_prefix = f"Error in file '{e.file_path}':"
             if error_msg.startswith(file_prefix):
                 error_msg = error_msg[len(file_prefix):].strip()
@@ -93,21 +220,18 @@ def yaml_to_bin(yaml_input_path, bin_output_path):
         yaml_input_path (str): Path to the input YAML file.
         bin_output_path (str): Path to the output binary file.
     """
-    temp_json_path = None
     try:
-        zserio_object, temp_json_path, _ = _yaml_to_zserio_object(yaml_input_path)
+        zserio_object, _ = _yaml_to_zserio_object(yaml_input_path)
         zserio.serialize_to_file(zserio_object, bin_output_path)
     except TransformationError:
-        raise  # Already has file context, just re-raise
+        raise
     except Exception as e:
         raise TransformationError(
             f"Failed to convert YAML to binary: {e}",
             file_path=yaml_input_path,
             original_error=e
         )
-    finally:
-        if temp_json_path is not None:
-            os.remove(temp_json_path)
+
 
 def yaml_to_pyobj(yaml_input_path):
     """
@@ -119,21 +243,17 @@ def yaml_to_pyobj(yaml_input_path):
     Returns:
         object: The deserialized Python object.
     """
-    temp_json_path = None
     try:
-        zserio_object, temp_json_path, _ = _yaml_to_zserio_object(yaml_input_path)
+        zserio_object, _ = _yaml_to_zserio_object(yaml_input_path)
         return zserio_object
     except TransformationError:
-        raise  # Already has file context, just re-raise
+        raise
     except Exception as e:
         raise TransformationError(
             f"Failed to convert YAML to Python object: {e}",
             file_path=yaml_input_path,
             original_error=e
         )
-    finally:
-        if temp_json_path is not None:
-            os.remove(temp_json_path)
 
 def yaml_to_yaml(yaml_input_path, yaml_output_path=None):
     """
