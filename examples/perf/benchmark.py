@@ -9,6 +9,7 @@ Usage:
     python benchmark.py [--runs 3] [--records 5000] [--points-per-record 5]
 """
 import argparse
+import hashlib
 import json
 import os
 import statistics
@@ -26,7 +27,7 @@ from generate_perf_yaml import generate  # noqa: E402
 YAML_PATH = os.path.join(HERE, "perf.yaml")
 BIN_PATH = os.path.join(HERE, "perf.bin")
 REFERENCE_BIN = os.path.join(HERE, "perf_reference.bin")
-REFERENCE_DICT = os.path.join(HERE, "perf_reference_dict.json")
+REFERENCE_DICT_HASH = os.path.join(HERE, "perf_reference_dict.sha256")
 
 SCHEMA_MODULE = "perf.api"
 SCHEMA_TYPE = "Dataset"
@@ -94,13 +95,17 @@ def main() -> int:
         print(f"  run {i + 1}: {elapsed:.3f}s")
     _report("bin_to_dict", bin_timings)
 
+    dict_hash = hashlib.sha256(
+        json.dumps(last_dict, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
     if args.write_reference:
         import shutil
         shutil.copyfile(BIN_PATH, REFERENCE_BIN)
         print(f"\nWrote reference bin -> {REFERENCE_BIN}")
-        with open(REFERENCE_DICT, "w") as f:
-            json.dump(last_dict, f, indent=2, sort_keys=True)
-        print(f"Wrote reference dict -> {REFERENCE_DICT}")
+        with open(REFERENCE_DICT_HASH, "w") as f:
+            f.write(dict_hash + "\n")
+        print(f"Wrote reference dict hash -> {REFERENCE_DICT_HASH}")
         return 0
 
     status = 0
@@ -115,16 +120,16 @@ def main() -> int:
     else:
         print("No perf_reference.bin yet; run with --write-reference to pin one.")
 
-    if os.path.exists(REFERENCE_DICT):
-        with open(REFERENCE_DICT) as f:
-            expected = json.load(f)
-        if last_dict == expected:
-            print("dict matches perf_reference_dict.json.")
+    if os.path.exists(REFERENCE_DICT_HASH):
+        with open(REFERENCE_DICT_HASH) as f:
+            expected_hash = f.read().strip()
+        if dict_hash == expected_hash:
+            print("dict matches perf_reference_dict.sha256.")
         else:
-            print("MISMATCH: dict differs from perf_reference_dict.json")
+            print(f"MISMATCH: dict hash {dict_hash} != expected {expected_hash}")
             status = 1
     else:
-        print("No perf_reference_dict.json yet; run with --write-reference to pin one.")
+        print("No perf_reference_dict.sha256 yet; run with --write-reference to pin one.")
 
     return status
 
