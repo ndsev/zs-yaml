@@ -18,10 +18,37 @@ import zserio
 
 from zserio.creator import ZserioTreeCreator
 from zserio.bitbuffer import BitBuffer
+from zserio.exception import PythonRuntimeException
 from zserio.typeinfo import TypeAttribute
 from zserio.walker import Walker, WalkObserver
 
 from .yaml_transformer import YamlTransformer, TransformationError
+
+
+class _CachedZserioTreeCreator(ZserioTreeCreator):
+    """ZserioTreeCreator with a per-TypeInfo cache for field lookups.
+
+    zserio's stock `_find_member_info` is an O(N) linear scan over the
+    compound's fields on every call. For schemas with many fields and many
+    records, that dominates the creator overhead. The cache makes lookups
+    O(1) at the cost of one dict build per unique compound type.
+    """
+
+    _fields_cache = {}
+
+    @staticmethod
+    def _find_member_info(type_info, name):
+        tid = id(type_info)
+        mp = _CachedZserioTreeCreator._fields_cache.get(tid)
+        if mp is None:
+            mp = {m.schema_name: m for m in type_info.attributes[TypeAttribute.FIELDS]}
+            _CachedZserioTreeCreator._fields_cache[tid] = mp
+        member = mp.get(name)
+        if member is None:
+            raise PythonRuntimeException(
+                f"ZserioTreeCreator: Field '{name}' not found in '{type_info.schema_name}'!"
+            )
+        return member
 
 
 def _parse_enum_string_value(string_value, type_info):
@@ -148,7 +175,7 @@ def _walk_array(creator, items):
 
 
 def _dict_to_zserio_object(data, ImportedType, init_args):
-    creator = ZserioTreeCreator(ImportedType.type_info(), *init_args)
+    creator = _CachedZserioTreeCreator(ImportedType.type_info(), *init_args)
     creator.begin_root()
     _walk_compound(creator, data)
     return creator.end_root()

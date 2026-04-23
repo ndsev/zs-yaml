@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - `yaml_to_bin` / `yaml_to_pyobj` now drive `ZserioTreeCreator` directly from the transformed dict, skipping the intermediate JSON round-trip. Output is byte-identical; ~3.5-4x faster end-to-end on large inputs. Fixes #21
+- `yaml_to_bin` now uses a `ZserioTreeCreator` subclass with a cached `_find_member_info` to avoid zserio's per-call O(N) field scan. Small win on narrow schemas; scales with compound field count on wider schemas
 - `bin_to_dict` / `bin_to_yaml` / `pyobj_to_yaml` now build the dict directly from the zserio tree via a `zserio.walker.Walker` observer, skipping the intermediate JSON string. Output is byte-identical; ~1.55-1.6x faster on large inputs
 
 ### Added
