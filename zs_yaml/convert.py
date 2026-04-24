@@ -16,40 +16,86 @@ import json
 import importlib
 import zserio
 
-from zserio.creator import ZserioTreeCreator
 from zserio.bitbuffer import BitBuffer
-from zserio.exception import PythonRuntimeException
-from zserio.typeinfo import TypeAttribute
-from zserio.walker import Walker, WalkObserver
+from zserio.typeinfo import TypeAttribute, MemberAttribute
 
 from .yaml_transformer import YamlTransformer, TransformationError
 
 
-class _CachedZserioTreeCreator(ZserioTreeCreator):
-    """ZserioTreeCreator with a per-TypeInfo cache for field lookups.
+# Field kinds. Non-array kinds (0..5) mirror how a field value is shaped in the
+# dict; array kinds (6..11) wrap the corresponding element kind.
+_KIND_SCALAR = 0
+_KIND_ENUM = 1
+_KIND_BITMASK = 2
+_KIND_EXTERN = 3
+_KIND_BYTES = 4
+_KIND_COMPOUND = 5
+_KIND_ARRAY_SCALAR = 6
+_KIND_ARRAY_ENUM = 7
+_KIND_ARRAY_BITMASK = 8
+_KIND_ARRAY_EXTERN = 9
+_KIND_ARRAY_BYTES = 10
+_KIND_ARRAY_COMPOUND = 11
 
-    zserio's stock `_find_member_info` is an O(N) linear scan over the
-    compound's fields on every call. For schemas with many fields and many
-    records, that dominates the creator overhead. The cache makes lookups
-    O(1) at the cost of one dict build per unique compound type.
-    """
+_ARRAY_KIND = {
+    _KIND_SCALAR: _KIND_ARRAY_SCALAR,
+    _KIND_ENUM: _KIND_ARRAY_ENUM,
+    _KIND_BITMASK: _KIND_ARRAY_BITMASK,
+    _KIND_EXTERN: _KIND_ARRAY_EXTERN,
+    _KIND_BYTES: _KIND_ARRAY_BYTES,
+    _KIND_COMPOUND: _KIND_ARRAY_COMPOUND,
+}
 
-    _fields_cache = {}
 
-    @staticmethod
-    def _find_member_info(type_info, name):
-        tid = id(type_info)
-        mp = _CachedZserioTreeCreator._fields_cache.get(tid)
-        if mp is None:
-            mp = {m.schema_name: m for m in type_info.attributes[TypeAttribute.FIELDS]}
-            _CachedZserioTreeCreator._fields_cache[tid] = mp
-        member = mp.get(name)
-        if member is None:
-            raise PythonRuntimeException(
-                f"ZserioTreeCreator: Field '{name}' not found in '{type_info.schema_name}'!"
-            )
-        return member
+class _FieldDescriptor:
+    __slots__ = ("schema_name", "property_name", "type_info", "kind", "type_args")
 
+    def __init__(self, member_info):
+        self.schema_name = member_info.schema_name
+        self.property_name = member_info.attributes[MemberAttribute.PROPERTY_NAME]
+        self.type_info = member_info.type_info
+        self.type_args = member_info.attributes.get(MemberAttribute.TYPE_ARGUMENTS)
+        ti_attrs = self.type_info.attributes
+        sn = self.type_info.schema_name
+        if sn == "extern":
+            base = _KIND_EXTERN
+        elif sn == "bytes":
+            base = _KIND_BYTES
+        elif TypeAttribute.ENUM_ITEMS in ti_attrs:
+            base = _KIND_ENUM
+        elif TypeAttribute.BITMASK_VALUES in ti_attrs:
+            base = _KIND_BITMASK
+        elif TypeAttribute.FIELDS in ti_attrs:
+            base = _KIND_COMPOUND
+        else:
+            base = _KIND_SCALAR
+        is_array = MemberAttribute.ARRAY_LENGTH in member_info.attributes
+        self.kind = _ARRAY_KIND[base] if is_array else base
+
+
+class _CompoundDescriptor:
+    __slots__ = ("py_type", "is_choice", "fields", "by_name")
+
+    def __init__(self, type_info):
+        self.py_type = type_info.py_type
+        self.is_choice = TypeAttribute.SELECTOR in type_info.attributes
+        self.fields = [_FieldDescriptor(m) for m in type_info.attributes[TypeAttribute.FIELDS]]
+        self.by_name = {fd.schema_name: fd for fd in self.fields}
+
+
+_COMPOUND_CACHE = {}
+
+
+def _compound_descriptor(type_info):
+    tid = id(type_info)
+    desc = _COMPOUND_CACHE.get(tid)
+    if desc is None:
+        desc = _CompoundDescriptor(type_info)
+        _COMPOUND_CACHE[tid] = desc
+    return desc
+
+
+# ---- string <-> enum/bitmask helpers (shared by forward and reverse) --------
 
 def _parse_enum_string_value(string_value, type_info):
     for item_info in type_info.attributes[TypeAttribute.ENUM_ITEMS]:
@@ -104,83 +150,6 @@ def _bitmask_from_string(string_value, type_info):
     raise ValueError(f"Cannot create bitmask '{type_info.schema_name}' from string value '{string_value}'")
 
 
-def _convert_scalar(value, type_info):
-    if value is None:
-        return None
-    if TypeAttribute.ENUM_ITEMS in type_info.attributes:
-        if isinstance(value, str):
-            return _enum_from_string(value, type_info)
-        return type_info.py_type(value)
-    if TypeAttribute.BITMASK_VALUES in type_info.attributes:
-        if isinstance(value, str):
-            return _bitmask_from_string(value, type_info)
-        return type_info.py_type.from_value(value)
-    return value
-
-
-def _bitbuffer_from_dict(value):
-    buffer = value.get('buffer', [])
-    bit_size = value.get('bitSize', len(buffer) * 8)
-    return BitBuffer(bytes(buffer), bit_size)
-
-
-def _bytes_from_dict(value):
-    return bytearray(value.get('buffer', []))
-
-
-def _build_object_value(schema_name, value):
-    if schema_name == "extern":
-        return _bitbuffer_from_dict(value)
-    if schema_name == "bytes":
-        return _bytes_from_dict(value)
-    return None
-
-
-def _walk_compound(creator, data):
-    for key, value in data.items():
-        field_type = creator.get_field_type(key)
-        schema_name = field_type.schema_name
-        if isinstance(value, dict):
-            object_value = _build_object_value(schema_name, value)
-            if object_value is not None:
-                creator.set_value(key, object_value)
-            else:
-                creator.begin_compound(key)
-                _walk_compound(creator, value)
-                creator.end_compound()
-        elif isinstance(value, list):
-            creator.begin_array(key)
-            _walk_array(creator, value)
-            creator.end_array()
-        else:
-            creator.set_value(key, _convert_scalar(value, field_type))
-
-
-def _walk_array(creator, items):
-    element_type = creator.get_element_type()
-    schema_name = element_type.schema_name
-    for item in items:
-        if isinstance(item, dict):
-            object_value = _build_object_value(schema_name, item)
-            if object_value is not None:
-                creator.add_value_element(object_value)
-            else:
-                creator.begin_compound_element()
-                _walk_compound(creator, item)
-                creator.end_compound_element()
-        elif isinstance(item, list):
-            raise ValueError("Nested arrays are not supported by zserio")
-        else:
-            creator.add_value_element(_convert_scalar(item, element_type))
-
-
-def _dict_to_zserio_object(data, ImportedType, init_args):
-    creator = _CachedZserioTreeCreator(ImportedType.type_info(), *init_args)
-    creator.begin_root()
-    _walk_compound(creator, data)
-    return creator.end_root()
-
-
 def _stringify_enum(value, type_info):
     for item in type_info.attributes[TypeAttribute.ENUM_ITEMS]:
         if item.py_item == value:
@@ -207,71 +176,139 @@ def _stringify_bitmask(value, type_info):
     return joined
 
 
-def _encode_value(value, type_info):
+def _bitbuffer_from_dict(value):
+    buffer = value.get('buffer', [])
+    bit_size = value.get('bitSize', len(buffer) * 8)
+    return BitBuffer(bytes(buffer), bit_size)
+
+
+def _bytes_from_dict(value):
+    return bytearray(value.get('buffer', []))
+
+
+def _convert_enum_value(value, type_info):
+    if isinstance(value, str):
+        return _enum_from_string(value, type_info)
+    return type_info.py_type(value)
+
+
+def _convert_bitmask_value(value, type_info):
+    if isinstance(value, str):
+        return _bitmask_from_string(value, type_info)
+    return type_info.py_type.from_value(value)
+
+
+# ---- forward: dict -> zserio object ----------------------------------------
+
+def _build_compound(desc, data, args):
+    obj = desc.py_type(*args)
+    for key, value in data.items():
+        fd = desc.by_name[key]
+        _assign_field(obj, fd, value)
+    return obj
+
+
+def _assign_field(obj, fd, value):
+    property_name = fd.property_name
     if value is None:
-        return None
-    schema_name = type_info.schema_name
-    if schema_name == "extern":
-        return {"buffer": list(value.buffer), "bitSize": value.bitsize}
-    if schema_name == "bytes":
-        return {"buffer": list(value)}
-    if TypeAttribute.ENUM_ITEMS in type_info.attributes:
-        return _stringify_enum(value, type_info)
-    if TypeAttribute.BITMASK_VALUES in type_info.attributes:
-        return _stringify_bitmask(value, type_info)
-    return value
+        setattr(obj, property_name, None)
+        return
+    kind = fd.kind
+    ti = fd.type_info
+    if kind == _KIND_SCALAR:
+        setattr(obj, property_name, value)
+    elif kind == _KIND_COMPOUND:
+        setattr(obj, property_name, _construct_child(ti, value, obj, fd.type_args, None))
+    elif kind == _KIND_ENUM:
+        setattr(obj, property_name, _convert_enum_value(value, ti))
+    elif kind == _KIND_BITMASK:
+        setattr(obj, property_name, _convert_bitmask_value(value, ti))
+    elif kind == _KIND_EXTERN:
+        setattr(obj, property_name, _bitbuffer_from_dict(value))
+    elif kind == _KIND_BYTES:
+        setattr(obj, property_name, _bytes_from_dict(value))
+    elif kind == _KIND_ARRAY_SCALAR:
+        setattr(obj, property_name, list(value))
+    elif kind == _KIND_ARRAY_COMPOUND:
+        type_args = fd.type_args
+        setattr(obj, property_name,
+                [_construct_child(ti, v, obj, type_args, i) for i, v in enumerate(value)])
+    elif kind == _KIND_ARRAY_ENUM:
+        setattr(obj, property_name, [_convert_enum_value(v, ti) for v in value])
+    elif kind == _KIND_ARRAY_BITMASK:
+        setattr(obj, property_name, [_convert_bitmask_value(v, ti) for v in value])
+    elif kind == _KIND_ARRAY_EXTERN:
+        setattr(obj, property_name, [_bitbuffer_from_dict(v) for v in value])
+    elif kind == _KIND_ARRAY_BYTES:
+        setattr(obj, property_name, [_bytes_from_dict(v) for v in value])
 
 
-class _DictBuilder(WalkObserver):
-    """Walker observer that builds a plain dict mirroring zserio's JSON format."""
+def _construct_child(type_info, data, parent, type_args_lambdas, element_index):
+    desc = _compound_descriptor(type_info)
+    if type_args_lambdas:
+        args = [lam(parent, element_index) for lam in type_args_lambdas]
+    else:
+        args = ()
+    return _build_compound(desc, data, args)
 
-    def __init__(self):
-        self._stack = []
-        self.result = None
 
-    def _place(self, member_info, container):
-        parent = self._stack[-1]
-        if isinstance(parent, list):
-            parent.append(container)
-        else:
-            parent[member_info.schema_name] = container
+def _dict_to_zserio_object(data, ImportedType, init_args):
+    desc = _compound_descriptor(ImportedType.type_info())
+    return _build_compound(desc, data, init_args or ())
 
-    def begin_root(self, compound):
-        self.result = {}
-        self._stack.append(self.result)
 
-    def end_root(self, compound):
-        self._stack.pop()
+# ---- reverse: zserio object -> dict ----------------------------------------
 
-    def begin_array(self, array, member_info):
-        new_array = []
-        self._stack[-1][member_info.schema_name] = new_array
-        self._stack.append(new_array)
+def _compound_to_dict(desc, obj):
+    out = {}
+    if desc.is_choice:
+        choice_tag = obj.choice_tag
+        if choice_tag != obj.UNDEFINED_CHOICE:
+            fd = desc.fields[choice_tag]
+            _read_field(obj, fd, out)
+    else:
+        for fd in desc.fields:
+            _read_field(obj, fd, out)
+    return out
 
-    def end_array(self, array, member_info):
-        self._stack.pop()
 
-    def begin_compound(self, compound, member_info, element_index=None):
-        new_compound = {}
-        self._place(member_info, new_compound)
-        self._stack.append(new_compound)
-
-    def end_compound(self, compound, member_info, element_index=None):
-        self._stack.pop()
-
-    def visit_value(self, value, member_info, element_index=None):
-        encoded = _encode_value(value, member_info.type_info)
-        parent = self._stack[-1]
-        if isinstance(parent, list):
-            parent.append(encoded)
-        else:
-            parent[member_info.schema_name] = encoded
+def _read_field(obj, fd, out):
+    value = getattr(obj, fd.property_name)
+    schema_name = fd.schema_name
+    if value is None:
+        out[schema_name] = None
+        return
+    kind = fd.kind
+    ti = fd.type_info
+    if kind == _KIND_SCALAR:
+        out[schema_name] = value
+    elif kind == _KIND_COMPOUND:
+        out[schema_name] = _compound_to_dict(_compound_descriptor(ti), value)
+    elif kind == _KIND_ENUM:
+        out[schema_name] = _stringify_enum(value, ti)
+    elif kind == _KIND_BITMASK:
+        out[schema_name] = _stringify_bitmask(value, ti)
+    elif kind == _KIND_EXTERN:
+        out[schema_name] = {"buffer": list(value.buffer), "bitSize": value.bitsize}
+    elif kind == _KIND_BYTES:
+        out[schema_name] = {"buffer": list(value)}
+    elif kind == _KIND_ARRAY_SCALAR:
+        out[schema_name] = list(value)
+    elif kind == _KIND_ARRAY_COMPOUND:
+        sub_desc = _compound_descriptor(ti)
+        out[schema_name] = [_compound_to_dict(sub_desc, el) for el in value]
+    elif kind == _KIND_ARRAY_ENUM:
+        out[schema_name] = [_stringify_enum(v, ti) for v in value]
+    elif kind == _KIND_ARRAY_BITMASK:
+        out[schema_name] = [_stringify_bitmask(v, ti) for v in value]
+    elif kind == _KIND_ARRAY_EXTERN:
+        out[schema_name] = [{"buffer": list(v.buffer), "bitSize": v.bitsize} for v in value]
+    elif kind == _KIND_ARRAY_BYTES:
+        out[schema_name] = [{"buffer": list(v)} for v in value]
 
 
 def _zserio_object_to_dict(zserio_object):
-    builder = _DictBuilder()
-    Walker(builder).walk(zserio_object)
-    return builder.result
+    return _compound_to_dict(_compound_descriptor(zserio_object.type_info()), zserio_object)
 
 
 def _yaml_to_zserio_object(yaml_input_path):
