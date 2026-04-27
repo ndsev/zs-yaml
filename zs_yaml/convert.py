@@ -20,6 +20,17 @@ import os
 
 from .yaml_transformer import YamlTransformer, TransformationError
 
+__all__ = [
+    # Primary conversion entries are surfaced at the top-level `zs_yaml`
+    # package via re-exports in `__init__.py`. This submodule's docs page
+    # only documents the *advanced* extras to avoid duplicating the
+    # primary surface in two places.
+    "yaml_to_yaml",
+    "yaml_to_pyobj",
+    "pyobj_to_yaml",
+]
+
+
 def _yaml_to_zserio_object(yaml_input_path):
     """
     Converts a YAML file to a Zserio object.
