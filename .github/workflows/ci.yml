@@ -77,6 +77,18 @@ jobs:
             echo "Compression tests failed"
             exit 1
           fi
+      - name: Generate schema API for perf example
+        run: |
+          cd examples/perf
+          zserio perf.zs -withTypeInfoCode -python zs_gen_api
+      - name: Perf regression - byte-identical reference
+        run: |
+          cd examples/perf
+          python benchmark.py
+      - name: Perf regression - fast-path structural assertion
+        run: |
+          cd examples/perf
+          python test_fast_path.py
       - name: Build package
         run: |
           python -m build
