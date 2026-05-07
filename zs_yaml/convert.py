@@ -21,6 +21,16 @@ from zserio.typeinfo import TypeAttribute, MemberAttribute
 
 from .yaml_transformer import YamlTransformer, TransformationError
 
+__all__ = [
+    # Primary conversion entries are surfaced at the top-level `zs_yaml`
+    # package via re-exports in `__init__.py`. This submodule's docs page
+    # only documents the *advanced* extras to avoid duplicating the
+    # primary surface in two places.
+    "yaml_to_yaml",
+    "yaml_to_pyobj",
+    "pyobj_to_yaml",
+]
+
 
 # Field kinds. Non-array kinds (0..5) mirror how a field value is shaped in the
 # dict; array kinds (6..11) wrap the corresponding element kind.

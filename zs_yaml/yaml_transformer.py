@@ -6,7 +6,6 @@ import os
 import yaml
 import zs_yaml.built_in_transformations
 
-
 class TransformationError(Exception):
     """Exception raised during YAML transformation with file context."""
     def __init__(self, message, file_path=None, original_error=None):
