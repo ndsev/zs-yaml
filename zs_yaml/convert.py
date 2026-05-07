@@ -15,8 +15,9 @@ import yaml
 import json
 import importlib
 import zserio
-import tempfile
-import os
+
+from zserio.bitbuffer import BitBuffer
+from zserio.typeinfo import TypeAttribute, MemberAttribute
 
 from .yaml_transformer import YamlTransformer, TransformationError
 
@@ -31,6 +32,295 @@ __all__ = [
 ]
 
 
+# Field kinds. Non-array kinds (0..5) mirror how a field value is shaped in the
+# dict; array kinds (6..11) wrap the corresponding element kind.
+_KIND_SCALAR = 0
+_KIND_ENUM = 1
+_KIND_BITMASK = 2
+_KIND_EXTERN = 3
+_KIND_BYTES = 4
+_KIND_COMPOUND = 5
+_KIND_ARRAY_SCALAR = 6
+_KIND_ARRAY_ENUM = 7
+_KIND_ARRAY_BITMASK = 8
+_KIND_ARRAY_EXTERN = 9
+_KIND_ARRAY_BYTES = 10
+_KIND_ARRAY_COMPOUND = 11
+
+_ARRAY_KIND = {
+    _KIND_SCALAR: _KIND_ARRAY_SCALAR,
+    _KIND_ENUM: _KIND_ARRAY_ENUM,
+    _KIND_BITMASK: _KIND_ARRAY_BITMASK,
+    _KIND_EXTERN: _KIND_ARRAY_EXTERN,
+    _KIND_BYTES: _KIND_ARRAY_BYTES,
+    _KIND_COMPOUND: _KIND_ARRAY_COMPOUND,
+}
+
+
+class _FieldDescriptor:
+    __slots__ = ("schema_name", "property_name", "type_info", "kind", "type_args")
+
+    def __init__(self, member_info):
+        self.schema_name = member_info.schema_name
+        self.property_name = member_info.attributes[MemberAttribute.PROPERTY_NAME]
+        self.type_info = member_info.type_info
+        self.type_args = member_info.attributes.get(MemberAttribute.TYPE_ARGUMENTS)
+        ti_attrs = self.type_info.attributes
+        sn = self.type_info.schema_name
+        if sn == "extern":
+            base = _KIND_EXTERN
+        elif sn == "bytes":
+            base = _KIND_BYTES
+        elif TypeAttribute.ENUM_ITEMS in ti_attrs:
+            base = _KIND_ENUM
+        elif TypeAttribute.BITMASK_VALUES in ti_attrs:
+            base = _KIND_BITMASK
+        elif TypeAttribute.FIELDS in ti_attrs:
+            base = _KIND_COMPOUND
+        else:
+            base = _KIND_SCALAR
+        is_array = MemberAttribute.ARRAY_LENGTH in member_info.attributes
+        self.kind = _ARRAY_KIND[base] if is_array else base
+
+
+class _CompoundDescriptor:
+    __slots__ = ("py_type", "is_choice", "fields", "by_name")
+
+    def __init__(self, type_info):
+        self.py_type = type_info.py_type
+        self.is_choice = TypeAttribute.SELECTOR in type_info.attributes
+        self.fields = [_FieldDescriptor(m) for m in type_info.attributes[TypeAttribute.FIELDS]]
+        self.by_name = {fd.schema_name: fd for fd in self.fields}
+
+
+_COMPOUND_CACHE = {}
+
+
+def _compound_descriptor(type_info):
+    tid = id(type_info)
+    desc = _COMPOUND_CACHE.get(tid)
+    if desc is None:
+        desc = _CompoundDescriptor(type_info)
+        _COMPOUND_CACHE[tid] = desc
+    return desc
+
+
+# ---- string <-> enum/bitmask helpers (shared by forward and reverse) --------
+
+def _parse_enum_string_value(string_value, type_info):
+    for item_info in type_info.attributes[TypeAttribute.ENUM_ITEMS]:
+        if string_value == item_info.schema_name:
+            return item_info.py_item
+    return None
+
+
+def _parse_bitmask_string_value(string_value, type_info):
+    value = 0
+    for identifier_with_spaces in string_value.split('|'):
+        identifier = identifier_with_spaces.strip()
+        match = False
+        for item_info in type_info.attributes[TypeAttribute.BITMASK_VALUES]:
+            if identifier == item_info.schema_name:
+                match = True
+                value |= item_info.py_item.value
+                break
+        if not match:
+            return None
+    return value
+
+
+def _parse_bitmask_numeric_string_value(string_value):
+    number_len = 1
+    while number_len < len(string_value) and '0' <= string_value[number_len] <= '9':
+        number_len += 1
+    return int(string_value[0:number_len])
+
+
+def _enum_from_string(string_value, type_info):
+    if string_value:
+        first_char = string_value[0]
+        if ('A' <= first_char <= 'Z') or ('a' <= first_char <= 'z') or first_char == '_':
+            py_item = _parse_enum_string_value(string_value, type_info)
+            if py_item is not None:
+                return py_item
+    raise ValueError(f"Cannot create enum '{type_info.schema_name}' from string value '{string_value}'")
+
+
+def _bitmask_from_string(string_value, type_info):
+    if string_value:
+        first_char = string_value[0]
+        if ('A' <= first_char <= 'Z') or ('a' <= first_char <= 'z') or first_char == '_':
+            value = _parse_bitmask_string_value(string_value, type_info)
+            if value is not None:
+                return type_info.py_type.from_value(value)
+        elif '0' <= first_char <= '9':
+            value = _parse_bitmask_numeric_string_value(string_value)
+            if value is not None:
+                return type_info.py_type.from_value(value)
+    raise ValueError(f"Cannot create bitmask '{type_info.schema_name}' from string value '{string_value}'")
+
+
+def _stringify_enum(value, type_info):
+    for item in type_info.attributes[TypeAttribute.ENUM_ITEMS]:
+        if item.py_item == value:
+            return item.schema_name
+    return f"{value.value} /* no match */"
+
+
+def _stringify_bitmask(value, type_info):
+    bitmask_value = value.value
+    parts = []
+    value_check = 0
+    for item_info in type_info.attributes[TypeAttribute.BITMASK_VALUES]:
+        item_value = item_info.py_item.value
+        is_zero = item_value == 0
+        if ((not is_zero and bitmask_value & item_value == item_value)
+                or (is_zero and bitmask_value == 0)):
+            value_check |= item_value
+            parts.append(item_info.schema_name)
+    if not parts:
+        return f"{bitmask_value} /* no match */"
+    joined = " | ".join(parts)
+    if bitmask_value != value_check:
+        return f"{bitmask_value} /* partial match: {joined} */"
+    return joined
+
+
+def _bitbuffer_from_dict(value):
+    buffer = value.get('buffer', [])
+    bit_size = value.get('bitSize', len(buffer) * 8)
+    return BitBuffer(bytes(buffer), bit_size)
+
+
+def _bytes_from_dict(value):
+    return bytearray(value.get('buffer', []))
+
+
+def _convert_enum_value(value, type_info):
+    if isinstance(value, str):
+        return _enum_from_string(value, type_info)
+    return type_info.py_type(value)
+
+
+def _convert_bitmask_value(value, type_info):
+    if isinstance(value, str):
+        return _bitmask_from_string(value, type_info)
+    return type_info.py_type.from_value(value)
+
+
+# ---- forward: dict -> zserio object ----------------------------------------
+
+def _build_compound(desc, data, args):
+    obj = desc.py_type(*args)
+    for key, value in data.items():
+        fd = desc.by_name[key]
+        _assign_field(obj, fd, value)
+    return obj
+
+
+def _assign_field(obj, fd, value):
+    property_name = fd.property_name
+    if value is None:
+        setattr(obj, property_name, None)
+        return
+    kind = fd.kind
+    ti = fd.type_info
+    if kind == _KIND_SCALAR:
+        setattr(obj, property_name, value)
+    elif kind == _KIND_COMPOUND:
+        setattr(obj, property_name, _construct_child(ti, value, obj, fd.type_args, None))
+    elif kind == _KIND_ENUM:
+        setattr(obj, property_name, _convert_enum_value(value, ti))
+    elif kind == _KIND_BITMASK:
+        setattr(obj, property_name, _convert_bitmask_value(value, ti))
+    elif kind == _KIND_EXTERN:
+        setattr(obj, property_name, _bitbuffer_from_dict(value))
+    elif kind == _KIND_BYTES:
+        setattr(obj, property_name, _bytes_from_dict(value))
+    elif kind == _KIND_ARRAY_SCALAR:
+        setattr(obj, property_name, list(value))
+    elif kind == _KIND_ARRAY_COMPOUND:
+        type_args = fd.type_args
+        setattr(obj, property_name,
+                [_construct_child(ti, v, obj, type_args, i) for i, v in enumerate(value)])
+    elif kind == _KIND_ARRAY_ENUM:
+        setattr(obj, property_name, [_convert_enum_value(v, ti) for v in value])
+    elif kind == _KIND_ARRAY_BITMASK:
+        setattr(obj, property_name, [_convert_bitmask_value(v, ti) for v in value])
+    elif kind == _KIND_ARRAY_EXTERN:
+        setattr(obj, property_name, [_bitbuffer_from_dict(v) for v in value])
+    elif kind == _KIND_ARRAY_BYTES:
+        setattr(obj, property_name, [_bytes_from_dict(v) for v in value])
+
+
+def _construct_child(type_info, data, parent, type_args_lambdas, element_index):
+    desc = _compound_descriptor(type_info)
+    if type_args_lambdas:
+        args = [lam(parent, element_index) for lam in type_args_lambdas]
+    else:
+        args = ()
+    return _build_compound(desc, data, args)
+
+
+def _dict_to_zserio_object(data, ImportedType, init_args):
+    desc = _compound_descriptor(ImportedType.type_info())
+    return _build_compound(desc, data, init_args or ())
+
+
+# ---- reverse: zserio object -> dict ----------------------------------------
+
+def _compound_to_dict(desc, obj):
+    out = {}
+    if desc.is_choice:
+        choice_tag = obj.choice_tag
+        if choice_tag != obj.UNDEFINED_CHOICE:
+            fd = desc.fields[choice_tag]
+            _read_field(obj, fd, out)
+    else:
+        for fd in desc.fields:
+            _read_field(obj, fd, out)
+    return out
+
+
+def _read_field(obj, fd, out):
+    value = getattr(obj, fd.property_name)
+    schema_name = fd.schema_name
+    if value is None:
+        out[schema_name] = None
+        return
+    kind = fd.kind
+    ti = fd.type_info
+    if kind == _KIND_SCALAR:
+        out[schema_name] = value
+    elif kind == _KIND_COMPOUND:
+        out[schema_name] = _compound_to_dict(_compound_descriptor(ti), value)
+    elif kind == _KIND_ENUM:
+        out[schema_name] = _stringify_enum(value, ti)
+    elif kind == _KIND_BITMASK:
+        out[schema_name] = _stringify_bitmask(value, ti)
+    elif kind == _KIND_EXTERN:
+        out[schema_name] = {"buffer": list(value.buffer), "bitSize": value.bitsize}
+    elif kind == _KIND_BYTES:
+        out[schema_name] = {"buffer": list(value)}
+    elif kind == _KIND_ARRAY_SCALAR:
+        out[schema_name] = list(value)
+    elif kind == _KIND_ARRAY_COMPOUND:
+        sub_desc = _compound_descriptor(ti)
+        out[schema_name] = [_compound_to_dict(sub_desc, el) for el in value]
+    elif kind == _KIND_ARRAY_ENUM:
+        out[schema_name] = [_stringify_enum(v, ti) for v in value]
+    elif kind == _KIND_ARRAY_BITMASK:
+        out[schema_name] = [_stringify_bitmask(v, ti) for v in value]
+    elif kind == _KIND_ARRAY_EXTERN:
+        out[schema_name] = [{"buffer": list(v.buffer), "bitSize": v.bitsize} for v in value]
+    elif kind == _KIND_ARRAY_BYTES:
+        out[schema_name] = [{"buffer": list(v)} for v in value]
+
+
+def _zserio_object_to_dict(zserio_object):
+    return _compound_to_dict(_compound_descriptor(zserio_object.type_info()), zserio_object)
+
+
 def _yaml_to_zserio_object(yaml_input_path):
     """
     Converts a YAML file to a Zserio object.
@@ -39,19 +329,16 @@ def _yaml_to_zserio_object(yaml_input_path):
         yaml_input_path (str): Path to the input YAML file.
 
     Returns:
-        tuple: A tuple containing (zserio_object, temp_json_path, meta)
+        tuple: A tuple containing (zserio_object, meta)
 
     Raises:
         ValueError: If schema_module and schema_type are not specified in the _meta
             section of the YAML file.
     """
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as temp_json_file:
-        temp_json_path = temp_json_file.name
-
     try:
-        meta = yaml_to_json(yaml_input_path, temp_json_path)
+        transformed_data, meta = yaml_to_yaml(yaml_input_path)
     except TransformationError:
-        raise  # Already has file context, just re-raise
+        raise
     except Exception as e:
         raise TransformationError(
             f"Failed to process YAML file: {e}",
@@ -72,16 +359,13 @@ def _yaml_to_zserio_object(yaml_input_path):
         if ImportedType is None:
             raise ValueError(f"Type {schema_type} not found in module {schema_module}")
 
-        zserio_object = zserio.from_json_file(ImportedType, temp_json_path, *init_args)
-        return zserio_object, temp_json_path, meta
+        zserio_object = _dict_to_zserio_object(transformed_data, ImportedType, init_args)
+        return zserio_object, meta
     except TransformationError:
-        raise  # Already has file context, just re-raise
+        raise
     except Exception as e:
-        # Check if this is a zserio error that might already have file context
         error_msg = str(e)
         if hasattr(e, 'file_path') and e.file_path:
-            # This error already has file context from an included file
-            # Strip redundant "Error in file '...':" prefix if present
             file_prefix = f"Error in file '{e.file_path}':"
             if error_msg.startswith(file_prefix):
                 error_msg = error_msg[len(file_prefix):].strip()
@@ -104,21 +388,18 @@ def yaml_to_bin(yaml_input_path, bin_output_path):
         yaml_input_path (str): Path to the input YAML file.
         bin_output_path (str): Path to the output binary file.
     """
-    temp_json_path = None
     try:
-        zserio_object, temp_json_path, _ = _yaml_to_zserio_object(yaml_input_path)
+        zserio_object, _ = _yaml_to_zserio_object(yaml_input_path)
         zserio.serialize_to_file(zserio_object, bin_output_path)
     except TransformationError:
-        raise  # Already has file context, just re-raise
+        raise
     except Exception as e:
         raise TransformationError(
             f"Failed to convert YAML to binary: {e}",
             file_path=yaml_input_path,
             original_error=e
         )
-    finally:
-        if temp_json_path is not None:
-            os.remove(temp_json_path)
+
 
 def yaml_to_pyobj(yaml_input_path):
     """
@@ -130,21 +411,17 @@ def yaml_to_pyobj(yaml_input_path):
     Returns:
         object: The deserialized Python object.
     """
-    temp_json_path = None
     try:
-        zserio_object, temp_json_path, _ = _yaml_to_zserio_object(yaml_input_path)
+        zserio_object, _ = _yaml_to_zserio_object(yaml_input_path)
         return zserio_object
     except TransformationError:
-        raise  # Already has file context, just re-raise
+        raise
     except Exception as e:
         raise TransformationError(
             f"Failed to convert YAML to Python object: {e}",
             file_path=yaml_input_path,
             original_error=e
         )
-    finally:
-        if temp_json_path is not None:
-            os.remove(temp_json_path)
 
 def yaml_to_yaml(yaml_input_path, yaml_output_path=None):
     """
@@ -242,8 +519,7 @@ def bin_to_dict(bin_input, schema_module, schema_type, init_args=None):
         else:
             zserio_object = zserio.deserialize_from_file(ImportedType, bin_input, *init_args)
 
-        json_data = zserio.to_json_string(zserio_object)
-        data = json.loads(json_data)
+        data = _zserio_object_to_dict(zserio_object)
 
         metadata = {
             'schema_module': schema_module,
@@ -320,9 +596,7 @@ def pyobj_to_yaml(zserio_object, yaml_output_path):
         schema_module = zserio_object.__class__.__module__
         schema_type = zserio_object.__class__.__name__
 
-        # Convert the object to JSON
-        json_data = zserio.to_json_string(zserio_object)
-        data = json.loads(json_data)
+        data = _zserio_object_to_dict(zserio_object)
 
         # Create a new dictionary to ensure _meta comes first
         final_data = {'_meta': {
