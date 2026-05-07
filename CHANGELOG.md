@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-05-07
+
+### Fixed
+- `bin_to_dict` / `bin_to_yaml`: the per-`TypeInfo` descriptor cache used `id(type_info)` as its key while only holding a weak hold on the type. After garbage collection, CPython could reuse that memory address for an unrelated zserio class and the cache would return a stale descriptor, surfacing as spurious `'X' object has no attribute 'y'` errors in long-running processes (e.g. multi-test suites that load several schemas). The cache now keys on the `TypeInfo` object itself.
+
 ## [0.10.0] - 2026-05-07
 
 ### Changed

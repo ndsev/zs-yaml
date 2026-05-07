@@ -97,11 +97,13 @@ _COMPOUND_CACHE = {}
 
 
 def _compound_descriptor(type_info):
-    tid = id(type_info)
-    desc = _COMPOUND_CACHE.get(tid)
+    # Key on the type_info object itself, not id(type_info): id() reuses memory
+    # addresses after GC, which would return a stale descriptor pointing at the
+    # fields of a previous, unrelated zserio class.
+    desc = _COMPOUND_CACHE.get(type_info)
     if desc is None:
         desc = _CompoundDescriptor(type_info)
-        _COMPOUND_CACHE[tid] = desc
+        _COMPOUND_CACHE[type_info] = desc
     return desc
 
 
