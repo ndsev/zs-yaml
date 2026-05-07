@@ -7,11 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-05-07
+
 ### Changed
 - `yaml_to_bin` / `yaml_to_pyobj` no longer use `zserio.creator.ZserioTreeCreator` or `zserio.walker.Walker`. Both directions now use a per-compound `TypeInfo` descriptor cache and drive object construction (`py_type(*args)` + `setattr`) and traversal (`getattr`) directly. Parameterized types, choice/union, optional, and conditional fields are handled. Output is byte-identical in all cases; measured ~10x faster end-to-end for `yaml_to_bin` and ~3x for `bin_to_dict` on the perf harness (5000-record dataset) compared to the original JSON-string round-trip path. Fixes #21
 
 ### Added
 - `examples/perf` harness (`perf.zs`, `generate_perf_yaml.py`, `benchmark.py`) for performance regression testing of both conversion directions (`yaml_to_bin` and `bin_to_dict`)
+- `examples/perf/test_fast_path.py` structural assertion that the fast path is exercised (no `ZserioTreeCreator` / `Walker` instantiation), wired into CI to catch accidental regressions independent of wall-clock timing
+
+## [0.9.1] - 2026-04-27
+
+### Changed
+- Curated `__all__` and added a landing-page docstring to improve the public API documentation surface
 
 ## [0.9.0] - 2026-04-23
 
