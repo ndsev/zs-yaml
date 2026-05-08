@@ -279,6 +279,56 @@ members:
         raise
 
 
+def test_descriptor_cache_keyed_on_object_not_id():
+    """Regression: _COMPOUND_CACHE must not alias distinct TypeInfos by id().
+
+    Previously the cache keyed on ``id(type_info)`` while only storing the
+    descriptor. Each call to a generated ``type_info()`` returns a fresh
+    ``TypeInfo`` instance, so after GC reclaims one, a later call can land at
+    the same memory address and the cache returns a stale descriptor —
+    surfacing as ``'X' object has no attribute 'y'`` errors during
+    ``bin_to_dict`` / ``bin_to_yaml`` in long-running processes that load
+    multiple schemas.
+
+    We simulate the collision by seeding the cache with an int key matching
+    ``id(type_info)`` whose value is an unrelated descriptor, then verify the
+    lookup still returns the correct descriptor for that ``type_info``.
+    """
+    from team.api import Team, Person
+    from zs_yaml import convert
+
+    print("Testing _COMPOUND_CACHE id-reuse regression...")
+
+    ti_team = Team.type_info()
+    ti_person = Person.type_info()
+
+    convert._COMPOUND_CACHE.clear()
+    desc_team = convert._compound_descriptor(ti_team)
+    desc_person = convert._compound_descriptor(ti_person)
+    assert desc_team is not desc_person, "Distinct TypeInfos must produce distinct descriptors"
+
+    # Simulate the previous bug: an int key matching id(ti_person) carrying
+    # an unrelated descriptor (as if a freed TypeInfo had occupied that
+    # address before GC reclaimed it). A correctly-keyed cache (keyed on the
+    # TypeInfo object) ignores the stale int-keyed entry; a buggy id-keyed
+    # cache would return desc_team for ti_person.
+    convert._COMPOUND_CACHE[id(ti_person)] = desc_team
+    desc_person_again = convert._compound_descriptor(ti_person)
+
+    if desc_person_again is not desc_person:
+        team_fields = [f.schema_name for f in desc_team.fields]
+        person_fields_expected = [f.schema_name for f in desc_person.fields]
+        person_fields_actual = [f.schema_name for f in desc_person_again.fields]
+        raise AssertionError(
+            "_COMPOUND_CACHE returned a stale descriptor — id() reuse regression. "
+            f"Expected fields={person_fields_expected}, got={person_fields_actual} "
+            f"(matches Team fields={team_fields})."
+        )
+
+    print("   ✓ cache returns correct descriptor under simulated id() collision")
+    return True
+
+
 if __name__ == "__main__":
     try:
         # Run all tests
@@ -287,7 +337,8 @@ if __name__ == "__main__":
         test_json_to_yaml(json_path)
         test_bin_to_yaml()
         test_yaml_to_yaml_with_template_args()
-        
+        test_descriptor_cache_keyed_on_object_not_id()
+
         print("\n✅ All conversion tests passed!")
         sys.exit(0)
     except Exception as e:
