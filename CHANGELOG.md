@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Opt-in `rapidyaml`-backed YAML loader for ~5x faster parsing on large fragments. Output is byte-identical to the default PyYAML loader (scalar resolution delegates to PyYAML's own resolver patterns). Activate with `pip install zs-yaml[fast]` and either `ZS_YAML_LOADER=ryml` or `YamlTransformer(loader="ryml")`. Default loader remains PyYAML.
+
 ## [0.10.1] - 2026-05-07
 
 ### Fixed
