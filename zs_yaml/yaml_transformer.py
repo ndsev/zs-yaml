@@ -16,6 +16,21 @@ class TransformationError(Exception):
         super().__init__(message)
 
 
+def _resolve_loader(loader):
+    """Pick the YAML loader. Honors explicit arg, else env var ZS_YAML_LOADER, else default."""
+    name = loader or os.environ.get("ZS_YAML_LOADER") or YamlTransformer.LOADER
+    name = name.lower()
+    if name == "pyyaml":
+        return lambda content: yaml.load(content, Loader=yaml.CLoader)
+    if name == "ryml":
+        from zs_yaml import _ryml_loader  # lazy: only require rapidyaml when used
+        return _ryml_loader.load
+    raise ValueError(
+        f"Unknown YAML loader '{name}'. Expected 'pyyaml' or 'ryml' "
+        f"(install with: pip install zs-yaml[fast])."
+    )
+
+
 class YamlTransformer:
     """
     Encapsulates a transformed yaml and allows
@@ -26,9 +41,17 @@ class YamlTransformer:
     _loaded_modules = {}
     _transformed_yaml_cache = {}
 
-    def __init__(self, yaml_file_path, template_args=None, initial_transformations=None):
+    # Default YAML loader: "pyyaml" (PyYAML CLoader) or "ryml" (rapidyaml-backed,
+    # opt-in via the [fast] extra). Override globally by assigning this class
+    # attribute, per-instance via the ``loader=`` constructor arg, or via the
+    # ZS_YAML_LOADER environment variable.
+    LOADER = "pyyaml"
+
+    def __init__(self, yaml_file_path, template_args=None, initial_transformations=None, loader=None):
         self.yaml_file_path = os.path.abspath(yaml_file_path)
         self.transformations = initial_transformations or {}
+        self._loader_name = loader
+        self._load_yaml = _resolve_loader(loader)
         self._load_functions(zs_yaml.built_in_transformations)
         self._load_and_transform(template_args)
 
@@ -50,7 +73,7 @@ class YamlTransformer:
         needs_transformation = "_f:" in content
 
         try:
-            self.original_data = yaml.load(content, Loader=yaml.CLoader)
+            self.original_data = self._load_yaml(content)
         except yaml.YAMLError as e:
             # Extract line/column info if available
             line_info = ""
@@ -150,7 +173,7 @@ class YamlTransformer:
         return data
 
     @classmethod
-    def get_or_create(cls, yaml_file_path, template_args=None, initial_transformations=None):
+    def get_or_create(cls, yaml_file_path, template_args=None, initial_transformations=None, loader=None):
         abs_path = os.path.abspath(yaml_file_path)
         cache_key = (abs_path, frozenset(template_args.items()) if template_args else None)
 
@@ -158,7 +181,7 @@ class YamlTransformer:
         if cache_key in cache:
             return cache[cache_key]
 
-        transformed_yaml = cls(abs_path, template_args, initial_transformations)
+        transformed_yaml = cls(abs_path, template_args, initial_transformations, loader=loader)
         cache[cache_key] = transformed_yaml
         return transformed_yaml
 

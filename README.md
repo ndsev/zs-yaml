@@ -36,6 +36,14 @@ Install `zs-yaml` using pip:
 python -m pip install --upgrade zs-yaml
 ```
 
+For ~5x faster parsing of large YAML inputs, install the optional `fast` extra (adds [rapidyaml](https://github.com/biojppm/rapidyaml)):
+
+```bash
+python -m pip install --upgrade 'zs-yaml[fast]'
+```
+
+Activate the fast loader by setting the environment variable `ZS_YAML_LOADER=ryml`, or programmatically with `YamlTransformer(loader="ryml")` / `YamlTransformer.LOADER = "ryml"`. Output is byte-identical to the default PyYAML loader (scalar resolution delegates to PyYAML's own resolver patterns).
+
 ## Usage
 
 The main entry point for the application is `zs-yaml`. It accepts arguments for specifying the input and output file paths. You can run the application as follows:

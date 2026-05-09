@@ -33,6 +33,11 @@ dependencies = [
     "brotli",
 ]
 
+[project.optional-dependencies]
+fast = [
+    "rapidyaml>=0.12.0",
+]
+
 [project.urls]
 Homepage = "https://github.com/ndsev/zs-yaml"
 Repository = "https://github.com/ndsev/zs-yaml"
