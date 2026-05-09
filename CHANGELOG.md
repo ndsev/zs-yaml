@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `data_to_zserio_object(data, imported_type, init_args=None)` public API: builds a Zserio object directly from an in-memory dict tree, with no JSON detour. Same fast path that `yaml_to_bin` / `yaml_to_pyobj` already use internally — exposed so downstream tools holding a transformed Python tree (e.g. SmartLayer wrappers with embedded extern buffers) can avoid the `json.dump` + `zserio.from_json_stream` roundtrip.
+
 ## [0.10.1] - 2026-05-07
 
 ### Fixed
