@@ -63,6 +63,10 @@ jobs:
             echo "Conversion tests failed"
             exit 1
           fi
+      - name: Test data_to_zserio_object public API
+        run: |
+          cd examples/team
+          python test_data_to_zserio_object.py
       - name: Generate schema API for extern_compression example
         run: |
           cd examples/extern_compression

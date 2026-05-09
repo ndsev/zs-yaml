@@ -53,7 +53,14 @@ Most users will reach for the CLI rather than this Python API:
     zs-yaml input.bin  output.yaml
 """
 
-from .convert import yaml_to_json, yaml_to_bin, bin_to_yaml, bin_to_dict, json_to_yaml
+from .convert import (
+    yaml_to_json,
+    yaml_to_bin,
+    bin_to_yaml,
+    bin_to_dict,
+    json_to_yaml,
+    data_to_zserio_object,
+)
 from .yaml_transformer import YamlTransformer, TransformationError
 
 try:
@@ -79,6 +86,7 @@ __all__ = [
     "yaml_to_json",
     "json_to_yaml",
     "bin_to_dict",
+    "data_to_zserio_object",
     # Transformation engine
     "YamlTransformer",
     "TransformationError",

@@ -29,6 +29,7 @@ __all__ = [
     "yaml_to_yaml",
     "yaml_to_pyobj",
     "pyobj_to_yaml",
+    "data_to_zserio_object",
 ]
 
 
@@ -267,6 +268,37 @@ def _construct_child(type_info, data, parent, type_args_lambdas, element_index):
 def _dict_to_zserio_object(data, ImportedType, init_args):
     desc = _compound_descriptor(ImportedType.type_info())
     return _build_compound(desc, data, init_args or ())
+
+
+def data_to_zserio_object(data, imported_type, init_args=None):
+    """
+    Build a Zserio object directly from an in-memory Python ``dict`` tree.
+
+    This is the same fast path used internally by :func:`yaml_to_bin` and
+    :func:`yaml_to_pyobj`: it walks the schema descriptor for ``imported_type``
+    and assigns fields from ``data`` field-by-field, with no JSON detour. For
+    payloads with large ``extern`` blobs (millions of bytes), this avoids the
+    text-based JSON roundtrip that ``zserio.from_json_stream`` would otherwise
+    perform.
+
+    The expected ``data`` shape is the same dict tree produced by zs-yaml's
+    transformer (or by :func:`bin_to_dict` in the reverse direction):
+
+    - extern fields use ``{"buffer": [int, ...], "bitSize": int}``
+    - bytes fields use ``{"buffer": [int, ...]}``
+    - enums and bitmasks accept either their string spelling or numeric value
+    - compound fields are nested dicts; arrays of compounds are lists of dicts
+
+    Args:
+        data: The transformed Python tree (without ``_meta``).
+        imported_type: The generated zserio class (e.g. ``team.api.Team``).
+        init_args: Optional iterable of zserio initialization arguments. ``None``
+            and ``()`` are equivalent.
+
+    Returns:
+        An instance of ``imported_type`` populated from ``data``.
+    """
+    return _dict_to_zserio_object(data, imported_type, init_args)
 
 
 # ---- reverse: zserio object -> dict ----------------------------------------
