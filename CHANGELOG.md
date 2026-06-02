@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-06-02
+
+### Added
+- `bin -> yaml` can now take the zserio type directly via `--type <module.TypeName>` (and optional `--init-args`), so the target YAML no longer has to be pre-created with a `_meta` block. Fully backward compatible: when `--type` is omitted, the existing read-target-`_meta` behavior (including any `transformation_module`) is unchanged. `bin_to_yaml(...)` gains matching optional `schema_module`/`schema_type`/`init_args` parameters. Fixes #30
+
 ## [0.10.1] - 2026-05-07
 
 ### Fixed
