@@ -572,34 +572,58 @@ def bin_to_dict(bin_input, schema_module, schema_type, init_args=None):
         )
 
 
-def bin_to_yaml(bin_input_path, yaml_output_path):
+def bin_to_yaml(bin_input_path, yaml_output_path, schema_module=None, schema_type=None, init_args=None):
     """
     Converts a binary file to a YAML file using Zserio deserialization.
+
+    The deserialization type can be supplied in two ways:
+
+    1. By passing ``schema_module`` and ``schema_type`` directly. In this case the
+       output YAML file does not need to exist beforehand; a minimal ``_meta``
+       block is synthesized from the provided type.
+    2. By leaving them as ``None`` (the default). Then the target YAML file must
+       already exist and contain a ``_meta`` block with ``schema_module`` and
+       ``schema_type`` (the original behavior, preserved for backward compatibility).
+       Any extra ``_meta`` keys (e.g. ``transformation_module``) are kept.
 
     Args:
         bin_input_path (str): Path to the input binary file.
         yaml_output_path (str): Path to the output YAML file.
+        schema_module (str, optional): Fully-qualified schema module name.
+        schema_type (str, optional): Schema type name.
+        init_args (list, optional): Initialization arguments for deserialization.
 
     Raises:
-        ValueError: If schema_module and schema_type are not specified in the _meta
-            section of the YAML file, or if the specified Zserio type is not found
-            in the module.
+        ValueError: If the type cannot be determined (neither passed directly nor
+            available in the target YAML file's ``_meta`` section).
     """
     try:
-        with open(yaml_output_path, 'r') as yaml_file:
-            meta = yaml.safe_load(yaml_file)
+        if schema_module and schema_type:
+            # Type provided directly: no pre-existing target file required.
+            meta_block = {'schema_module': schema_module, 'schema_type': schema_type}
+            if init_args:
+                meta_block['initialization_args'] = init_args
+        else:
+            # Backward-compatible: read the type from the existing target's _meta.
+            with open(yaml_output_path, 'r') as yaml_file:
+                meta = yaml.safe_load(yaml_file)
 
-        schema_module = meta.get('_meta', {}).get('schema_module')
-        schema_type = meta.get('_meta', {}).get('schema_type')
-        init_args = meta.get('_meta', {}).get('initialization_args', [])
+            meta_block = (meta or {}).get('_meta', {})
+            schema_module = meta_block.get('schema_module')
+            schema_type = meta_block.get('schema_type')
+            init_args = meta_block.get('initialization_args', [])
 
-        if not schema_module or not schema_type:
-            raise ValueError("Error: schema_module and schema_type must be specified in the _meta section of the YAML file")
+            if not schema_module or not schema_type:
+                raise ValueError(
+                    "Error: schema_module and schema_type must be specified in the _meta "
+                    "section of the target YAML file, or passed via schema_module/schema_type "
+                    "(CLI: --type)"
+                )
 
         data, metadata = bin_to_dict(bin_input_path, schema_module, schema_type, init_args)
 
         # Create a new dictionary to ensure _meta comes first
-        final_data = {'_meta': meta['_meta']}
+        final_data = {'_meta': meta_block}
         final_data.update(data)
 
         with open(yaml_output_path, 'w') as yaml_file:

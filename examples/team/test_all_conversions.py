@@ -217,6 +217,53 @@ def test_bin_to_yaml():
         raise
 
 
+def test_bin_to_yaml_with_type_arg():
+    """Test bin_to_yaml with the type passed directly, no pre-existing target.
+
+    Regression for ndsev/zs-yaml#30: schema_module/schema_type (CLI --type) allow
+    binary -> YAML without a pre-created target file containing _meta.
+    """
+    print("\nTesting bin_to_yaml with --type (no pre-existing target)...")
+
+    result = subprocess.run(['zs-yaml', 'team1.yaml', 'test_bin_to_yaml_type.bin'],
+                            capture_output=True, text=True)
+    if result.returncode != 0:
+        raise Exception(f"Failed to create binary file: {result.stderr}")
+
+    out_path = 'test_bin_to_yaml_type_out.yaml'
+    cli_out = 'test_bin_to_yaml_type_cli.yaml'
+    for p in (out_path, cli_out):
+        if os.path.exists(p):
+            os.unlink(p)
+
+    try:
+        # API: pass the type directly; the target file does not exist yet.
+        bin_to_yaml('test_bin_to_yaml_type.bin', out_path,
+                    schema_module='team.api', schema_type='Team')
+        with open(out_path, 'r') as f:
+            output_data = yaml.safe_load(f)
+        assert output_data['_meta']['schema_module'] == 'team.api'
+        assert output_data['_meta']['schema_type'] == 'Team'
+        assert output_data['name'] == "Dream Team", "Team name doesn't match"
+        assert 'members' in output_data, "members field missing"
+
+        # CLI: end-to-end --type path.
+        r = subprocess.run(
+            ['zs-yaml', 'test_bin_to_yaml_type.bin', cli_out, '--type', 'team.api.Team'],
+            capture_output=True, text=True)
+        assert r.returncode == 0, f"CLI --type failed: {r.stderr}"
+        with open(cli_out, 'r') as f:
+            cli_data = yaml.safe_load(f)
+        assert cli_data['name'] == "Dream Team"
+
+        print("   ✓ bin -> yaml via --type successful")
+        return True
+    finally:
+        for p in ('test_bin_to_yaml_type.bin', out_path, cli_out):
+            if os.path.exists(p):
+                os.unlink(p)
+
+
 def test_yaml_to_yaml_with_template_args():
     """Test yaml_to_yaml with template argument substitution"""
     print("\nTesting yaml_to_yaml with template arguments...")
@@ -336,6 +383,7 @@ if __name__ == "__main__":
         json_path = test_yaml_to_json()
         test_json_to_yaml(json_path)
         test_bin_to_yaml()
+        test_bin_to_yaml_with_type_arg()
         test_yaml_to_yaml_with_template_args()
         test_descriptor_cache_keyed_on_object_not_id()
 

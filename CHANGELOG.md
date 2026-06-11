@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `data_to_zserio_object(data, imported_type, init_args=None)` public API: builds a Zserio object directly from an in-memory dict tree, with no JSON detour. Same fast path that `yaml_to_bin` / `yaml_to_pyobj` already use internally — exposed so downstream tools holding a transformed Python tree (e.g. SmartLayer wrappers with embedded extern buffers) can avoid the `json.dump` + `zserio.from_json_stream` roundtrip.
 - Opt-in `rapidyaml`-backed YAML loader for ~5x faster parsing on large fragments. Output is byte-identical to the default PyYAML loader (scalar resolution delegates to PyYAML's own resolver patterns). Activate with `pip install zs-yaml[fast]` and either `ZS_YAML_LOADER=ryml` or `YamlTransformer(loader="ryml")`. Default loader remains PyYAML.
 
+## [0.11.0] - 2026-06-09
+
+### Added
+- `bin -> yaml` can now take the zserio type directly via `--type <module.TypeName>` (and optional `--init-args`), so the target YAML no longer has to be pre-created with a `_meta` block. Fully backward compatible: when `--type` is omitted, the existing read-target-`_meta` behavior (including any `transformation_module`) is unchanged. `bin_to_yaml(...)` gains matching optional `schema_module`/`schema_type`/`init_args` parameters. Fixes #30
+
 ## [0.10.1] - 2026-05-07
 
 ### Fixed
