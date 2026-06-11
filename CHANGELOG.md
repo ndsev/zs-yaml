@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - `bin_to_dict(..., skip_nulls=True)`: omit unset optional fields during the reverse walk instead of emitting `None` entries, saving callers a separate null-stripping pass over the produced tree.
+- `YamlTransformer.has_function_invocations`: public flag telling downstream tools whether the document contained any `_f:` invocations, so they can skip their own post-transform scans for plain documents.
+
+### Changed
+- rapidyaml loader: plain-scalar coercion is memoized per unique string (capped), replacing a regex tag resolution plus numeric parse per occurrence with a dict hit. Mapping keys and enum-like values repeat millions of times in large documents; on a 500 MB map load this removes ~25% of total build CPU.
 - `data_to_zserio_object(data, imported_type, init_args=None)` public API: builds a Zserio object directly from an in-memory dict tree, with no JSON detour. Same fast path that `yaml_to_bin` / `yaml_to_pyobj` already use internally — exposed so downstream tools holding a transformed Python tree (e.g. SmartLayer wrappers with embedded extern buffers) can avoid the `json.dump` + `zserio.from_json_stream` roundtrip.
 - Opt-in `rapidyaml`-backed YAML loader for ~5x faster parsing on large fragments. Output is byte-identical to the default PyYAML loader (scalar resolution delegates to PyYAML's own resolver patterns). Activate with `pip install zs-yaml[fast]` and either `ZS_YAML_LOADER=ryml` or `YamlTransformer(loader="ryml")`. Default loader remains PyYAML.
 
