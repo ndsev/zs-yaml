@@ -100,21 +100,38 @@ def _to_timestamp(value: str):
     return _SAFE_CONSTRUCTOR.construct_yaml_timestamp(node)
 
 
+# Coercion results are immutable scalars (str/int/float/bool/None/datetime),
+# so they can be shared across occurrences. Mapping keys and enum-like values
+# repeat millions of times in large documents; the memo replaces a regex
+# resolution + numeric parse per occurrence with one dict hit. Capped so
+# pathological inputs cannot grow it unbounded.
+_SCALAR_CACHE: dict = {}
+_SCALAR_CACHE_LIMIT = 1 << 20
+
+
 def _coerce_plain_scalar(value: str) -> Any:
+    try:
+        return _SCALAR_CACHE[value]
+    except KeyError:
+        pass
     tag = _resolve_implicit_tag(value)
     if tag == _TAG_STR:
-        return value
-    if tag == _TAG_NULL:
-        return None
-    if tag == _TAG_BOOL:
-        return _BOOL_VALUES[value.lower()]
-    if tag == _TAG_INT:
-        return _to_int(value)
-    if tag == _TAG_FLOAT:
-        return _to_float(value)
-    if tag == _TAG_TIMESTAMP:
-        return _to_timestamp(value)
-    return value
+        result = value
+    elif tag == _TAG_NULL:
+        result = None
+    elif tag == _TAG_BOOL:
+        result = _BOOL_VALUES[value.lower()]
+    elif tag == _TAG_INT:
+        result = _to_int(value)
+    elif tag == _TAG_FLOAT:
+        result = _to_float(value)
+    elif tag == _TAG_TIMESTAMP:
+        result = _to_timestamp(value)
+    else:
+        result = value
+    if len(_SCALAR_CACHE) < _SCALAR_CACHE_LIMIT:
+        _SCALAR_CACHE[value] = result
+    return result
 
 
 def _walk(tree, node):
