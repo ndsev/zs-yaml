@@ -98,13 +98,18 @@ _COMPOUND_CACHE = {}
 
 
 def _compound_descriptor(type_info):
-    # Key on the type_info object itself, not id(type_info): id() reuses memory
-    # addresses after GC, which would return a stale descriptor pointing at the
-    # fields of a previous, unrelated zserio class.
-    desc = _COMPOUND_CACHE.get(type_info)
+    # Key on the generated class, not the TypeInfo object: generated
+    # type_info() builds a fresh TypeInfo graph on every call, so a cache
+    # keyed on the TypeInfo object never hits across top-level conversions
+    # and silently rebuilds every nested descriptor each call (and keeps the
+    # dead TypeInfo graphs alive as cache keys). The class object is stable
+    # for the lifetime of the process and, held strongly as the key, cannot
+    # be garbage collected and have its identity reused.
+    py_type = type_info.py_type
+    desc = _COMPOUND_CACHE.get(py_type)
     if desc is None:
         desc = _CompoundDescriptor(type_info)
-        _COMPOUND_CACHE[type_info] = desc
+        _COMPOUND_CACHE[py_type] = desc
     return desc
 
 
