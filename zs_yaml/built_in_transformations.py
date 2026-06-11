@@ -92,7 +92,11 @@ def insert_yaml_as_extern(transformer, file, template_args=None, compression_typ
 
     abs_path = transformer.resolve_path(file)
     try:
-        external_transformer = transformer.__class__(abs_path, template_args, initial_transformations=transformer.transformations)
+        external_transformer = transformer.__class__(
+            abs_path, template_args,
+            initial_transformations=transformer.transformations,
+            loader=getattr(transformer, "_loader_name", None),
+        )
     except TransformationError:
         # Re-raise as-is to preserve the file context
         raise
@@ -177,7 +181,10 @@ def insert_yaml(transformer, file, node_path='', template_args=None, cache_file=
 
     abs_path = os.path.abspath(os.path.join(os.path.dirname(transformer.yaml_file_path), file))
     try:
-        transformed_yaml = transformer.__class__.get_or_create(abs_path, template_args, transformer.transformations)
+        transformed_yaml = transformer.__class__.get_or_create(
+            abs_path, template_args, transformer.transformations,
+            loader=getattr(transformer, "_loader_name", None),
+        )
     except TransformationError:
         # Re-raise as-is to preserve the file context
         raise

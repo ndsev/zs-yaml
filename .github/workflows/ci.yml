@@ -67,6 +67,20 @@ jobs:
         run: |
           cd examples/team
           python test_data_to_zserio_object.py
+      - name: Install rapidyaml fast loader
+        run: |
+          pip install -e .[fast]
+      - name: Test ryml loader byte-equality
+        run: |
+          cd examples/team
+          python test_ryml_loader.py
+      - name: Re-run team conversions with ZS_YAML_LOADER=ryml
+        env:
+          ZS_YAML_LOADER: ryml
+        run: |
+          cd examples/team
+          python test_pyobj_to_yaml.py
+          python test_all_conversions.py
       - name: Generate schema API for extern_compression example
         run: |
           cd examples/extern_compression
@@ -81,6 +95,12 @@ jobs:
             echo "Compression tests failed"
             exit 1
           fi
+      - name: Re-run extern compression with ZS_YAML_LOADER=ryml
+        env:
+          ZS_YAML_LOADER: ryml
+        run: |
+          cd examples/extern_compression
+          PYTHONPATH="$PWD/zs_gen_api" python test_compression.py
       - name: Generate schema API for perf example
         run: |
           cd examples/perf
