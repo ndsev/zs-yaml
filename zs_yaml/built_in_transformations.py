@@ -15,6 +15,30 @@ from enum import Enum
 # Cache to store loaded YAML/JSON files
 _file_cache = {}
 
+
+def _copy_yaml_tree(node):
+    """
+    Deep-copy a plain YAML tree (dicts, lists, immutable scalars).
+
+    Much faster than ``copy.deepcopy`` because it skips the generic dispatch
+    and memo machinery, which is safe for trees produced by YAML loading.
+    Falls back to ``copy.deepcopy`` for self-referential trees (cyclic YAML
+    anchors) where the plain recursion would not terminate.
+    """
+    cls = node.__class__
+    if cls is dict:
+        return {key: _copy_yaml_tree(value) for key, value in node.items()}
+    if cls is list:
+        return [_copy_yaml_tree(value) for value in node]
+    return node
+
+
+def _deep_copy_data(node):
+    try:
+        return _copy_yaml_tree(node)
+    except RecursionError:
+        return copy.deepcopy(node)
+
 class CompressionType(Enum):
     NO_COMPRESSION = 0
     ZLIB = 1
@@ -198,11 +222,9 @@ def insert_yaml(transformer, file, node_path='', template_args=None, cache_file=
     data = transformed_yaml.data
 
     if not node_path:
-        # Deep copy is not good from performance point of
-        # view but it still avoids loading the file again and
-        # again and the nodes don't appear as alias but are
-        # are really copies when used multiple times
-        return copy.deepcopy(data)
+        # Copy so the cached tree stays pristine when callers mutate the
+        # result; nodes must not appear as aliases when used multiple times
+        return _deep_copy_data(data)
 
     # Parse the path and extract the node
     parsed_path = []
@@ -242,7 +264,7 @@ def repeat_node(transformer, node, count):
     Returns:
         list: A list containing the repeated node.
     """
-    return [copy.deepcopy(node) for _ in range(count)]
+    return [_deep_copy_data(node) for _ in range(count)]
 
 
 def extract_extern_as_yaml(transformer, buffer, bitSize, schema_module, schema_type, file_name, compression_type=None, remove_nulls=False):
