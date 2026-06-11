@@ -308,31 +308,32 @@ def data_to_zserio_object(data, imported_type, init_args=None):
 
 # ---- reverse: zserio object -> dict ----------------------------------------
 
-def _compound_to_dict(desc, obj):
+def _compound_to_dict(desc, obj, skip_nulls=False):
     out = {}
     if desc.is_choice:
         choice_tag = obj.choice_tag
         if choice_tag != obj.UNDEFINED_CHOICE:
             fd = desc.fields[choice_tag]
-            _read_field(obj, fd, out)
+            _read_field(obj, fd, out, skip_nulls)
     else:
         for fd in desc.fields:
-            _read_field(obj, fd, out)
+            _read_field(obj, fd, out, skip_nulls)
     return out
 
 
-def _read_field(obj, fd, out):
+def _read_field(obj, fd, out, skip_nulls=False):
     value = getattr(obj, fd.property_name)
     schema_name = fd.schema_name
     if value is None:
-        out[schema_name] = None
+        if not skip_nulls:
+            out[schema_name] = None
         return
     kind = fd.kind
     ti = fd.type_info
     if kind == _KIND_SCALAR:
         out[schema_name] = value
     elif kind == _KIND_COMPOUND:
-        out[schema_name] = _compound_to_dict(_compound_descriptor(ti), value)
+        out[schema_name] = _compound_to_dict(_compound_descriptor(ti), value, skip_nulls)
     elif kind == _KIND_ENUM:
         out[schema_name] = _stringify_enum(value, ti)
     elif kind == _KIND_BITMASK:
@@ -345,7 +346,7 @@ def _read_field(obj, fd, out):
         out[schema_name] = list(value)
     elif kind == _KIND_ARRAY_COMPOUND:
         sub_desc = _compound_descriptor(ti)
-        out[schema_name] = [_compound_to_dict(sub_desc, el) for el in value]
+        out[schema_name] = [_compound_to_dict(sub_desc, el, skip_nulls) for el in value]
     elif kind == _KIND_ARRAY_ENUM:
         out[schema_name] = [_stringify_enum(v, ti) for v in value]
     elif kind == _KIND_ARRAY_BITMASK:
@@ -356,8 +357,9 @@ def _read_field(obj, fd, out):
         out[schema_name] = [{"buffer": list(v)} for v in value]
 
 
-def _zserio_object_to_dict(zserio_object):
-    return _compound_to_dict(_compound_descriptor(zserio_object.type_info()), zserio_object)
+def _zserio_object_to_dict(zserio_object, skip_nulls=False):
+    return _compound_to_dict(_compound_descriptor(zserio_object.type_info()), zserio_object,
+                             skip_nulls)
 
 
 def _yaml_to_zserio_object(yaml_input_path):
@@ -526,7 +528,7 @@ def json_to_yaml(json_input_path, yaml_output_path):
         yaml.safe_dump(data, yaml_file, default_flow_style=False, sort_keys=False)
 
 
-def bin_to_dict(bin_input, schema_module, schema_type, init_args=None):
+def bin_to_dict(bin_input, schema_module, schema_type, init_args=None, skip_nulls=False):
     """
     Converts binary data to a Python dictionary using Zserio deserialization.
 
@@ -535,6 +537,9 @@ def bin_to_dict(bin_input, schema_module, schema_type, init_args=None):
         schema_module (str): The schema module name (e.g., 'ndslive.schema.smart.v2024_11.tile.api').
         schema_type (str): The schema type name (e.g., 'SmartLayerTile').
         init_args (list, optional): Initialization arguments for zserio deserialization.
+        skip_nulls (bool, optional): If True, unset optional fields are omitted from
+            the result instead of appearing as None entries. Saves a separate
+            null-stripping pass over the produced tree.
 
     Returns:
         tuple: (data_dict, metadata_dict) where data_dict is the deserialized data
@@ -558,7 +563,7 @@ def bin_to_dict(bin_input, schema_module, schema_type, init_args=None):
         else:
             zserio_object = zserio.deserialize_from_file(ImportedType, bin_input, *init_args)
 
-        data = _zserio_object_to_dict(zserio_object)
+        data = _zserio_object_to_dict(zserio_object, skip_nulls)
 
         metadata = {
             'schema_module': schema_module,
