@@ -93,7 +93,10 @@ class YamlTransformer:
         else:
             self.metadata = None
 
-        # Skip transformation processing if no function calls detected
+        # Skip transformation processing if no function calls detected. The
+        # flag is public so downstream tools can skip their own post-transform
+        # walks (e.g. extern materialization) for plain documents.
+        self.has_function_invocations = needs_transformation
         if needs_transformation:
             self.data = self._process(self.original_data)
         else:
