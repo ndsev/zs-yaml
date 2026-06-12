@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Optional `zs_yaml_native` C extension (`native/`): parses YAML and builds the Python tree entirely in C over a vendored rapidyaml, replacing the per-node python/binding round trips of the `ryml` loader. ~10x faster loading on multi-hundred-MB documents; output is identical (scalar resolution still anchors to PyYAML via a memoized callback for all non-trivial shapes). Used automatically by the `ryml` loader when built (`ZS_YAML_NATIVE=0` disables); built as a cp311-abi3 wheel candidate like the rest of the native tier.
+
 ### Changed
 - `insert_yaml_as_extern` builds the zserio object directly from the transformed tree via `data_to_zserio_object` instead of a `json.dumps` + `zserio.from_json_string` round-trip — the JSON text detour dominated this transform's cost on large referenced documents.
 

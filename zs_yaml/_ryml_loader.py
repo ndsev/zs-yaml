@@ -169,6 +169,26 @@ _NONE = None
 _is_val_quoted = None
 _is_key_quoted = None
 
+# Optional C-level loader (zs_yaml_native): parses AND builds the python tree
+# in C, replacing the per-node python<->binding round trips below. Output is
+# identical (its scalar coercion funnels through _coerce_plain_scalar for all
+# non-trivial shapes). Tri-state: None = not probed yet, False = unavailable.
+_native_load = None
+
+
+def _ensure_native():
+    global _native_load
+    if _native_load is None:
+        import os
+        if os.environ.get("ZS_YAML_NATIVE", "1") == "0":
+            _native_load = False
+            return
+        try:
+            import zs_yaml_native
+            _native_load = zs_yaml_native.load
+        except ImportError:
+            _native_load = False
+
 
 def _ensure_ryml():
     global _NONE, _is_val_quoted, _is_key_quoted
@@ -191,9 +211,6 @@ def load(content) -> Any:
 
     Accepts ``str``, ``bytes``/``bytearray``, or a file-like object exposing ``.read()``.
     """
-    _ensure_ryml()
-    import ryml  # imported lazily; guaranteed available after _ensure_ryml
-
     if isinstance(content, str):
         buf = content.encode()
     elif isinstance(content, (bytes, bytearray)):
@@ -201,6 +218,13 @@ def load(content) -> Any:
     else:
         raw = content.read()
         buf = raw.encode() if isinstance(raw, str) else raw
+
+    _ensure_native()
+    if _native_load is not False:
+        return _native_load(buf, _coerce_plain_scalar)
+
+    _ensure_ryml()
+    import ryml  # imported lazily; guaranteed available after _ensure_ryml
 
     tree = ryml.parse_in_arena(buf)
     return _walk(tree, tree.root_id())

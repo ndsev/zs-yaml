@@ -32,3 +32,8 @@ pip-delete-this-directory.txt
 # System files
 .DS_Store
 Thumbs.db
+
+# Native extension build artifacts
+native/*.so
+native/build/
+native/*.egg-info/
