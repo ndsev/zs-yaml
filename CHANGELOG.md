@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- `bin_to_yaml` / `json_to_yaml` dump through libyaml (`CSafeDumper`) when available instead of the pure-python emitter, falling back transparently. ~3x faster on large documents. Note: long double-quoted scalars (non-ASCII content) may fold/escape at different positions than before — the parsed content is unchanged.
+
 ### Fixed
 - The compound-descriptor cache is now keyed on the generated class instead of the `TypeInfo` object. Generated `type_info()` builds a fresh `TypeInfo` graph on every call, so the previous key never hit across top-level conversions — every `bin_to_dict` / `data_to_zserio_object` call silently rebuilt all descriptors (and the cache grew with dead `TypeInfo` graphs). On a 584-layer NDS.Live filestore this cuts the reverse tree-walk time by ~40%.
 

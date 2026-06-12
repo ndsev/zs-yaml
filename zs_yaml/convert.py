@@ -21,6 +21,11 @@ from zserio.typeinfo import TypeAttribute, MemberAttribute
 
 from .yaml_transformer import YamlTransformer, TransformationError
 
+# Safe dumping with the libyaml serializer/emitter when available: the pure
+# python emitter dominates dump time on large trees (the representer output
+# is identical either way).
+_SAFE_DUMPER = getattr(yaml, "CSafeDumper", yaml.SafeDumper)
+
 __all__ = [
     # Primary conversion entries are surfaced at the top-level `zs_yaml`
     # package via re-exports in `__init__.py`. This submodule's docs page
@@ -525,7 +530,7 @@ def json_to_yaml(json_input_path, yaml_output_path):
     with open(json_input_path, 'r') as json_file:
         data = json.load(json_file)
     with open(yaml_output_path, 'w') as yaml_file:
-        yaml.safe_dump(data, yaml_file, default_flow_style=False, sort_keys=False)
+        yaml.dump(data, yaml_file, Dumper=_SAFE_DUMPER, default_flow_style=False, sort_keys=False)
 
 
 def bin_to_dict(bin_input, schema_module, schema_type, init_args=None, skip_nulls=False):
@@ -637,7 +642,7 @@ def bin_to_yaml(bin_input_path, yaml_output_path, schema_module=None, schema_typ
         final_data.update(data)
 
         with open(yaml_output_path, 'w') as yaml_file:
-            yaml.safe_dump(final_data, yaml_file, default_flow_style=False, sort_keys=False)
+            yaml.dump(final_data, yaml_file, Dumper=_SAFE_DUMPER, default_flow_style=False, sort_keys=False)
     except TransformationError:
         raise
     except Exception as e:
