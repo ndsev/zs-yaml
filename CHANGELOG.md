@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- `insert_yaml_as_extern` builds the zserio object directly from the transformed tree via `data_to_zserio_object` instead of a `json.dumps` + `zserio.from_json_string` round-trip — the JSON text detour dominated this transform's cost on large referenced documents.
+
+### Added
+- `set_extern_bytes_provider(provider)`: optional session cache hook for `insert_yaml_as_extern`. Embedding tools that already compile referenced documents standalone (e.g. parallel map builders) can serve the compiled bytes so the same document is not parsed and serialized twice per build.
 - `bin_to_yaml` / `json_to_yaml` dump through libyaml (`CSafeDumper`) when available instead of the pure-python emitter, falling back transparently. ~3x faster on large documents. Note: long double-quoted scalars (non-ASCII content) may fold/escape at different positions than before — the parsed content is unchanged.
 
 ### Fixed

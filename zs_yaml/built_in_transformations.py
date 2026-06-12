@@ -95,9 +95,29 @@ def _resolve_compression_type(compression_type):
     raise ValueError("compression_type must be a CompressionType enum, string, or integer value")
 
 
+_extern_bytes_provider = None
+
+
+def set_extern_bytes_provider(provider):
+    """
+    Registers a session cache for ``insert_yaml_as_extern``.
+
+    Embedding tools that compile referenced documents standalone anyway (e.g.
+    parallel map builders) can provide their compiled bytes here so the same
+    document is not parsed and serialized a second time.
+
+    Args:
+        provider: Callable ``(abs_yaml_path, compression_type) -> (buffer, bit_size) | None``,
+            or ``None`` to unregister. Only consulted for references without
+            template arguments.
+    """
+    global _extern_bytes_provider
+    _extern_bytes_provider = provider
+
+
 def insert_yaml_as_extern(transformer, file, template_args=None, compression_type=None):
     """
-    Include external YAML by transforming it to JSON and using zserio.
+    Serialize an external YAML document to extern bytes (``{buffer, bitSize}``).
 
     Args:
         transformer (YamlTransformer): The transformer instance.
@@ -115,6 +135,13 @@ def insert_yaml_as_extern(transformer, file, template_args=None, compression_typ
     ct_enum = _resolve_compression_type(compression_type)
 
     abs_path = transformer.resolve_path(file)
+
+    # Session cache short-circuit (see set_extern_bytes_provider)
+    if _extern_bytes_provider is not None and not template_args:
+        cached = _extern_bytes_provider(os.path.abspath(abs_path), compression_type)
+        if cached is not None:
+            buffer_bytes, bit_size = cached
+            return {"buffer": buffer_bytes, "bitSize": bit_size}
     try:
         external_transformer = transformer.__class__(
             abs_path, template_args,
@@ -143,13 +170,15 @@ def insert_yaml_as_extern(transformer, file, template_args=None, compression_typ
             file_path=abs_path
         )
 
-    json_string = json.dumps(processed_data)
-
-    # Convert JSON to binary using zserio
+    # Build the zserio object straight from the transformed tree (no JSON
+    # text detour: dumping and re-parsing the whole document dominated this
+    # function's cost on large layers).
     try:
+        from .convert import data_to_zserio_object
+
         module = importlib.import_module(schema_module)
         ImportedType = getattr(module, schema_type)
-        zserio_object = zserio.from_json_string(ImportedType, json_string)
+        zserio_object = data_to_zserio_object(processed_data, ImportedType)
     except Exception as e:
         # Try to extract more specific error info
         error_msg = str(e)
