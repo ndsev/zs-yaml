@@ -56,6 +56,15 @@ Extern-bytes hook
     serialize the referenced document again. Defined in
     :mod:`zs_yaml.built_in_transformations`.
 
+    YAML is parsed with PyYAML unless the optional ``fast`` extra
+    (``pip install zs-yaml[fast]``) is installed, in which case a
+    rapidyaml-backed loader builds the same tree in roughly half the time.
+    That is automatic; to name a loader instead of letting it follow the
+    install, pass ``YamlTransformer(..., loader=...)``, set
+    ``YamlTransformer.LOADER`` or set the ``ZS_YAML_LOADER`` environment
+    variable to ``"auto"``, ``"pyyaml"`` or ``"ryml"``. See the README section
+    "Faster YAML parsing" for the trade-offs.
+
 Version info
     :func:`get_version_info`, :data:`__version__`.
 

@@ -14,6 +14,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `YamlTransformer.has_function_invocations`: whether the source document contained any `_f:` call, so a downstream tool can skip its own post-transform walk for plain documents.
 - `examples/team/test_descriptor_cache.py` counts descriptor builds to pin that the cache hits across top-level conversions, and `examples/team/test_data_to_zserio_object.py` pins the new API against the JSON detour and `yaml_to_bin`. Both run in CI.
 - `YamlTransformer.cache_session()`: a context manager that shares one transform cache across everything inside the block, for batches whose documents pull in the same includes. The cache is released when the block exits.
+- Optional `fast` extra that parses YAML with [rapidyaml](https://github.com/biojppm/rapidyaml)
+  instead of PyYAML. `pip install zs-yaml[fast]` is the whole opt-in: the loader
+  setting defaults to `auto`, which uses rapidyaml when it is importable and
+  PyYAML when it is not, raising and warning about neither. A default install is
+  unaffected. Name a loader outright with `ZS_YAML_LOADER`,
+  `YamlTransformer(loader=...)` or `YamlTransformer.LOADER`, set to `auto`,
+  `pyyaml` or `ryml`; the environment variable outranks both code paths.
+  On a 1.07 MiB document this cut `yaml_to_bin` from 0.279 s to 0.140 s. The
+  loader builds the same Python tree PyYAML builds — same values, types and key
+  order — and hands documents it does not reimplement (anchors, aliases, merge
+  keys, explicit tags, multi-document streams, nesting past the Python
+  recursion limit) and anything rapidyaml cannot parse back to PyYAML, so
+  errors keep PyYAML's wording and position.
+  Asking for `ryml` by name when rapidyaml is not installed is reported rather
+  than ignored: `ZS_YAML_LOADER=ryml` raises, and selecting it from Python warns
+  and falls back to PyYAML, so a downstream tool can pin it without a missing
+  wheel breaking a build. See
+  [Faster YAML parsing](README.md#faster-yaml-parsing).
 
 ### Fixed
 - The compound descriptor cache never hit across top-level conversions. It keyed on the `TypeInfo` object, but a generated `type_info()` builds a fresh `TypeInfo` graph on every call, so every conversion rebuilt the whole descriptor tree and left the dead graphs alive as cache keys. It now keys on the generated class, which is stable for the process. Conversion output is unchanged.

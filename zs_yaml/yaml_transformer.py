@@ -5,6 +5,7 @@ import importlib
 import importlib.util
 import json
 import os
+import warnings
 import yaml
 import zs_yaml.built_in_transformations
 
@@ -13,6 +14,83 @@ import zs_yaml.built_in_transformations
 # transforms in different threads or asyncio tasks never share entries.
 # ``None`` means no transform is in progress and nothing is cached.
 _active_cache = ContextVar("zs_yaml_transform_cache", default=None)
+
+
+# Name of the environment variable a person sets to pick a YAML loader for a
+# run, to one of "auto", "pyyaml" or "ryml". It outranks anything the calling
+# code selected: the loaders produce the same data, so the choice is the
+# operator's to make or to undo.
+LOADER_ENV_VAR = "ZS_YAML_LOADER"
+
+
+def _load_pyyaml(content):
+    """The default loader, and the reference every other loader matches."""
+    return yaml.load(content, Loader=yaml.CLoader)
+
+
+def _resolve_loader(loader):
+    """Return the load function to use, given a per-instance `loader` request.
+
+    Three names are understood. ``"auto"``, the default, uses rapidyaml when it
+    is importable and PyYAML when it is not — installing the ``fast`` extra is
+    the whole opt-in, and an install without it is not an error, so this path
+    neither raises nor warns. ``"ryml"`` demands rapidyaml and ``"pyyaml"``
+    demands the default loader.
+
+    Precedence is environment variable, then the `loader` argument, then
+    :attr:`YamlTransformer.LOADER`. The environment variable comes first
+    because it is how a person overrides what the calling code chose.
+
+    Asking for ``"ryml"`` by name is different from taking it because it
+    happened to be there, so a missing dependency is reported. Where it is
+    reported depends on who asked: setting the environment variable is a
+    deliberate act by whoever runs the conversion, so that raises. Naming the
+    loader from code is a library's default, which must not turn a missing
+    wheel into a broken build, so that warns and uses PyYAML.
+    """
+    from_env = os.environ.get(LOADER_ENV_VAR)
+    selected_by_env = bool(from_env)
+    name = (from_env or loader or YamlTransformer.LOADER).lower()
+
+    if name == "pyyaml":
+        return _load_pyyaml
+    if name not in ("auto", "ryml"):
+        # A name none of the branches recognises is a typo, not a missing
+        # wheel, and falling back would hide it. Every path raises.
+        raise ValueError(
+            f"Unknown YAML loader '{name}'. Expected 'auto', 'pyyaml' or "
+            f"'ryml' (install rapidyaml with: pip install zs-yaml[fast])."
+        )
+
+    from zs_yaml import _ryml_loader
+    try:
+        _ryml_loader.ensure_available()
+    except ImportError:
+        if name == "auto":
+            return _load_pyyaml
+        if selected_by_env:
+            raise
+        warnings.warn(
+            f"YAML loader 'ryml' was selected in code but rapidyaml is not "
+            f"installed; falling back to PyYAML. Install it with "
+            f"'pip install zs-yaml[fast]', or set {LOADER_ENV_VAR}=auto to "
+            f"silence this.",
+            RuntimeWarning,
+            stacklevel=3,
+        )
+        return _load_pyyaml
+    return _ryml_loader.load
+
+
+def _loader_kwarg(loader):
+    """`loader=` as keyword arguments, empty when no loader was requested.
+
+    `YamlTransformer` is subclassed with the three-parameter `__init__` it had
+    before `loader` existed — `examples/team/test_all_conversions.py` does it.
+    Forwarding the parameter only when a loader was actually selected leaves
+    those subclasses working on the default path.
+    """
+    return {"loader": loader} if loader is not None else {}
 
 
 class TransformationError(Exception):
@@ -46,9 +124,21 @@ class YamlTransformer:
     # duplicate-name check in `_register_function`.
     _loaded_modules = {}
 
-    def __init__(self, yaml_file_path, template_args=None, initial_transformations=None):
+    # Which YAML loader to use when the caller names none. "auto" takes
+    # rapidyaml when the optional [fast] extra is installed and PyYAML's
+    # CLoader otherwise; "ryml" and "pyyaml" name one of them outright. All
+    # three build the same Python tree; see the module-level `_resolve_loader`
+    # for how a selection is made and what happens when rapidyaml is missing.
+    LOADER = "auto"
+
+    def __init__(self, yaml_file_path, template_args=None, initial_transformations=None,
+                 loader=None):
         self.yaml_file_path = os.path.abspath(yaml_file_path)
         self.transformations = initial_transformations or {}
+        # The requested name is kept alongside the resolved function so that
+        # included documents can be transformed with the same selection.
+        self._loader_name = loader
+        self._load_yaml = _resolve_loader(loader)
         self._load_functions(zs_yaml.built_in_transformations)
         # Opening a session here is what makes repeated includes inside this
         # document share one transformer. When a session is already open
@@ -74,7 +164,7 @@ class YamlTransformer:
         needs_transformation = "_f:" in content
 
         try:
-            self.original_data = yaml.load(content, Loader=yaml.CLoader)
+            self.original_data = self._load_yaml(content)
         except yaml.YAMLError as e:
             # Extract line/column info if available
             line_info = ""
@@ -213,12 +303,16 @@ class YamlTransformer:
             cache.clear()
 
     @classmethod
-    def get_or_create(cls, yaml_file_path, template_args=None, initial_transformations=None):
+    def get_or_create(cls, yaml_file_path, template_args=None, initial_transformations=None,
+                      loader=None):
         """Return the transformer for `yaml_file_path`, reusing a cached one.
 
         Reuse is limited to the cache of the enclosing session (see
         :meth:`cache_session`). Outside any session nothing is cached and
         every call builds a fresh transformer.
+
+        `loader` is not part of the cache key: both loaders build the same
+        tree, so a cached entry is valid whichever one produced it.
         """
         abs_path = os.path.abspath(yaml_file_path)
         cache_key = (abs_path, frozenset(template_args.items()) if template_args else None)
@@ -227,7 +321,8 @@ class YamlTransformer:
         if cache is not None and cache_key in cache:
             return cache[cache_key]
 
-        transformed_yaml = cls(abs_path, template_args, initial_transformations)
+        transformed_yaml = cls(abs_path, template_args, initial_transformations,
+                               **_loader_kwarg(loader))
         if cache is not None:
             cache[cache_key] = transformed_yaml
         return transformed_yaml
