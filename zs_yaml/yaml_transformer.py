@@ -1,3 +1,5 @@
+from contextlib import contextmanager
+from contextvars import ContextVar
 from string import Template
 import importlib
 import importlib.util
@@ -5,6 +7,13 @@ import json
 import os
 import yaml
 import zs_yaml.built_in_transformations
+
+# Cache of already-transformed YAML files for the transform currently in
+# progress. It is a ContextVar rather than a module global so that concurrent
+# transforms in different threads or asyncio tasks never share entries.
+# ``None`` means no transform is in progress and nothing is cached.
+_active_cache = ContextVar("zs_yaml_transform_cache", default=None)
+
 
 class TransformationError(Exception):
     """Exception raised during YAML transformation with file context."""
@@ -20,17 +29,28 @@ class YamlTransformer:
     """
     Encapsulates a transformed yaml and allows
     accessing the transformed data, original data and metadata..
+
+    Transformed files are cached only for the duration of one transform, so
+    converting many documents in one process does not accumulate expanded
+    trees. See :meth:`cache_session` to widen that window deliberately.
     """
 
-    # Class-level caches (modules and transformed yamls)
+    # Loaded transformation modules, keyed by absolute file path. Bounded by
+    # the number of distinct transformation modules a process imports, the
+    # same way `sys.modules` is; deliberately not per-transform, because
+    # re-executing a module would produce new function objects and trip the
+    # duplicate-name check in `_register_function`.
     _loaded_modules = {}
-    _transformed_yaml_cache = {}
 
     def __init__(self, yaml_file_path, template_args=None, initial_transformations=None):
         self.yaml_file_path = os.path.abspath(yaml_file_path)
         self.transformations = initial_transformations or {}
         self._load_functions(zs_yaml.built_in_transformations)
-        self._load_and_transform(template_args)
+        # Opening a session here is what makes repeated includes inside this
+        # document share one transformer. When a session is already open
+        # (nested include, or one opened by the caller) this joins it.
+        with self.cache_session():
+            self._load_and_transform(template_args)
 
     def _load_and_transform(self, template_args):
         try:
@@ -150,25 +170,71 @@ class YamlTransformer:
         return data
 
     @classmethod
+    @contextmanager
+    def cache_session(cls):
+        """Share one transform cache across everything done inside the block.
+
+        Without it, each top-level transform gets its own cache and drops it
+        on return, so a process converting many documents retains none of
+        them. Open a session when several documents pull in the same
+        includes and that work should be done once::
+
+            with YamlTransformer.cache_session():
+                for src, dst in jobs:
+                    yaml_to_bin(src, dst)
+
+        Everything cached inside is released when the block exits. Files are
+        assumed not to change while a session is open; if a transformation
+        rewrites a file that an earlier include already read (as
+        `extract_extern_as_yaml` can), call :meth:`clear_cache` or keep the
+        session narrower.
+
+        Nesting joins the outer session rather than starting a second one, so
+        only the outermost block releases the cache.
+        """
+        existing = _active_cache.get()
+        if existing is not None:
+            yield existing
+            return
+
+        cache = {}
+        token = _active_cache.set(cache)
+        try:
+            yield cache
+        finally:
+            _active_cache.reset(token)
+            cache.clear()
+
+    @classmethod
     def get_or_create(cls, yaml_file_path, template_args=None, initial_transformations=None):
+        """Return the transformer for `yaml_file_path`, reusing a cached one.
+
+        Reuse is limited to the cache of the enclosing session (see
+        :meth:`cache_session`). Outside any session nothing is cached and
+        every call builds a fresh transformer.
+        """
         abs_path = os.path.abspath(yaml_file_path)
         cache_key = (abs_path, frozenset(template_args.items()) if template_args else None)
 
-        cache = YamlTransformer._transformed_yaml_cache
-        if cache_key in cache:
+        cache = _active_cache.get()
+        if cache is not None and cache_key in cache:
             return cache[cache_key]
 
         transformed_yaml = cls(abs_path, template_args, initial_transformations)
-        cache[cache_key] = transformed_yaml
+        if cache is not None:
+            cache[cache_key] = transformed_yaml
         return transformed_yaml
 
     @classmethod
     def clear_cache(cls):
-        """Clear the entire transformer cache.
+        """Drop what the enclosing cache session has cached so far.
 
-        This should be called when YAML files or their output files (created by
-        transformations like extract_extern_as_yaml) are deleted or modified
-        externally. The cache assumes files are immutable during a session, so
-        external modifications require explicit cache invalidation.
+        Call this inside a :meth:`cache_session` when YAML files or their
+        output files (created by transformations like
+        `extract_extern_as_yaml`) are written or deleted while the session is
+        open, since cached entries would otherwise be stale. Outside a
+        session there is nothing to clear and the call does nothing.
         """
-        cls._transformed_yaml_cache.clear()
+        cache = _active_cache.get()
+        if cache is not None:
+            cache.clear()

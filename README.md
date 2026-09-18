@@ -59,6 +59,32 @@ zserio_object = yaml_to_pyobj('input.yaml')
 # Use the zserio_object as needed in your application
 ```
 
+### Caching and Batch Conversion
+
+While a document is being transformed, each YAML file it pulls in via
+`insert_yaml` is transformed once and reused, so a file included several times
+costs one parse. That cache is dropped when the conversion returns: converting
+many documents in one process does not accumulate their expanded trees, and
+there is nothing a caller has to remember to clear.
+
+If several documents share the same includes and you want that work done once,
+open a session around the batch. Everything cached inside is released when the
+block exits:
+
+```python
+from zs_yaml import YamlTransformer, yaml_to_bin
+
+with YamlTransformer.cache_session():
+    for src, dst in jobs:
+        yaml_to_bin(src, dst)
+```
+
+A session assumes the files it reads do not change while it is open. If a
+transformation writes a YAML file that a later include reads back — as
+`extract_extern_as_yaml` does — call `YamlTransformer.clear_cache()` at that
+point, or keep the session narrower. Outside a session `clear_cache()` has
+nothing to clear and does nothing.
+
 ### Notes
 
 - You have to use the exact same order of fields in the YAML as defined by the zserio schema, because zserio expects this.
