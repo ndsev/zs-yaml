@@ -29,6 +29,7 @@ __all__ = [
     "yaml_to_yaml",
     "yaml_to_pyobj",
     "pyobj_to_yaml",
+    "data_to_zserio_object",
 ]
 
 
@@ -97,13 +98,20 @@ _COMPOUND_CACHE = {}
 
 
 def _compound_descriptor(type_info):
-    # Key on the type_info object itself, not id(type_info): id() reuses memory
-    # addresses after GC, which would return a stale descriptor pointing at the
-    # fields of a previous, unrelated zserio class.
-    desc = _COMPOUND_CACHE.get(type_info)
+    # Key on the generated class, not on the TypeInfo object and not on
+    # id(type_info). A generated `type_info()` builds a fresh TypeInfo graph on
+    # every call, so a TypeInfo-keyed cache never hits across top-level
+    # conversions: it rebuilds every nested descriptor each time and keeps the
+    # dead TypeInfo graphs alive as keys. `id(type_info)` is worse still --
+    # CPython reuses addresses after GC, so the cache could return a stale
+    # descriptor for an unrelated class. The class object is stable for the
+    # lifetime of the process and, held strongly as the key, cannot be
+    # collected and have its identity reused.
+    py_type = type_info.py_type
+    desc = _COMPOUND_CACHE.get(py_type)
     if desc is None:
         desc = _CompoundDescriptor(type_info)
-        _COMPOUND_CACHE[type_info] = desc
+        _COMPOUND_CACHE[py_type] = desc
     return desc
 
 
@@ -269,33 +277,68 @@ def _dict_to_zserio_object(data, ImportedType, init_args):
     return _build_compound(desc, data, init_args or ())
 
 
+def data_to_zserio_object(data, imported_type, init_args=None):
+    """
+    Builds a zserio object directly from an in-memory Python ``dict`` tree.
+
+    This is the same path :func:`yaml_to_bin` and :func:`yaml_to_pyobj` take
+    once the YAML has been transformed: it walks the schema descriptor for
+    ``imported_type`` and assigns fields one by one. Callers that already hold
+    the transformed tree (because they built it themselves, or got it from
+    :func:`bin_to_dict`) can use it without going through a file or through
+    ``json.dumps`` + ``zserio.from_json_string``.
+
+    ``data`` uses the same shape the transformer produces and
+    :func:`bin_to_dict` returns:
+
+    - extern fields: ``{"buffer": [int, ...], "bitSize": int}``
+    - bytes fields: ``{"buffer": [int, ...]}``
+    - enums and bitmasks: either the string spelling or the numeric value
+    - compounds: nested dicts; arrays of compounds: lists of dicts
+
+    Keys are schema names, not Python property names, and ``_meta`` is not part
+    of ``data``.
+
+    Args:
+        data (dict): The transformed tree, without ``_meta``.
+        imported_type: The generated zserio class (e.g. ``team.api.Team``).
+        init_args (iterable, optional): zserio initialization arguments.
+            ``None`` and ``()`` are equivalent.
+
+    Returns:
+        An instance of ``imported_type`` populated from ``data``.
+    """
+    return _dict_to_zserio_object(data, imported_type, init_args)
+
+
 # ---- reverse: zserio object -> dict ----------------------------------------
 
-def _compound_to_dict(desc, obj):
+def _compound_to_dict(desc, obj, skip_nulls=False):
     out = {}
     if desc.is_choice:
         choice_tag = obj.choice_tag
         if choice_tag != obj.UNDEFINED_CHOICE:
             fd = desc.fields[choice_tag]
-            _read_field(obj, fd, out)
+            _read_field(obj, fd, out, skip_nulls)
     else:
         for fd in desc.fields:
-            _read_field(obj, fd, out)
+            _read_field(obj, fd, out, skip_nulls)
     return out
 
 
-def _read_field(obj, fd, out):
+def _read_field(obj, fd, out, skip_nulls=False):
     value = getattr(obj, fd.property_name)
     schema_name = fd.schema_name
     if value is None:
-        out[schema_name] = None
+        if not skip_nulls:
+            out[schema_name] = None
         return
     kind = fd.kind
     ti = fd.type_info
     if kind == _KIND_SCALAR:
         out[schema_name] = value
     elif kind == _KIND_COMPOUND:
-        out[schema_name] = _compound_to_dict(_compound_descriptor(ti), value)
+        out[schema_name] = _compound_to_dict(_compound_descriptor(ti), value, skip_nulls)
     elif kind == _KIND_ENUM:
         out[schema_name] = _stringify_enum(value, ti)
     elif kind == _KIND_BITMASK:
@@ -308,7 +351,7 @@ def _read_field(obj, fd, out):
         out[schema_name] = list(value)
     elif kind == _KIND_ARRAY_COMPOUND:
         sub_desc = _compound_descriptor(ti)
-        out[schema_name] = [_compound_to_dict(sub_desc, el) for el in value]
+        out[schema_name] = [_compound_to_dict(sub_desc, el, skip_nulls) for el in value]
     elif kind == _KIND_ARRAY_ENUM:
         out[schema_name] = [_stringify_enum(v, ti) for v in value]
     elif kind == _KIND_ARRAY_BITMASK:
@@ -319,8 +362,9 @@ def _read_field(obj, fd, out):
         out[schema_name] = [{"buffer": list(v)} for v in value]
 
 
-def _zserio_object_to_dict(zserio_object):
-    return _compound_to_dict(_compound_descriptor(zserio_object.type_info()), zserio_object)
+def _zserio_object_to_dict(zserio_object, skip_nulls=False):
+    return _compound_to_dict(_compound_descriptor(zserio_object.type_info()), zserio_object,
+                             skip_nulls)
 
 
 def _yaml_to_zserio_object(yaml_input_path):
@@ -489,7 +533,7 @@ def json_to_yaml(json_input_path, yaml_output_path):
         yaml.safe_dump(data, yaml_file, default_flow_style=False, sort_keys=False)
 
 
-def bin_to_dict(bin_input, schema_module, schema_type, init_args=None):
+def bin_to_dict(bin_input, schema_module, schema_type, init_args=None, skip_nulls=False):
     """
     Converts binary data to a Python dictionary using Zserio deserialization.
 
@@ -498,6 +542,10 @@ def bin_to_dict(bin_input, schema_module, schema_type, init_args=None):
         schema_module (str): The schema module name (e.g., 'ndslive.schema.smart.v2024_11.tile.api').
         schema_type (str): The schema type name (e.g., 'SmartLayerTile').
         init_args (list, optional): Initialization arguments for zserio deserialization.
+        skip_nulls (bool, optional): If True, unset optional fields are left out of
+            the result instead of appearing as ``None`` entries. Defaults to False,
+            which is the 0.11.0 behavior. Saves a separate null-stripping pass for
+            callers that would discard those entries anyway.
 
     Returns:
         tuple: (data_dict, metadata_dict) where data_dict is the deserialized data
@@ -521,7 +569,7 @@ def bin_to_dict(bin_input, schema_module, schema_type, init_args=None):
         else:
             zserio_object = zserio.deserialize_from_file(ImportedType, bin_input, *init_args)
 
-        data = _zserio_object_to_dict(zserio_object)
+        data = _zserio_object_to_dict(zserio_object, skip_nulls)
 
         metadata = {
             'schema_module': schema_module,
