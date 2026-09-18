@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Optional `fast` extra that parses YAML with [rapidyaml](https://github.com/biojppm/rapidyaml)
+  instead of PyYAML. Install with `pip install zs-yaml[fast]` and select it with
+  `ZS_YAML_LOADER=ryml`, `YamlTransformer(loader="ryml")` or
+  `YamlTransformer.LOADER = "ryml"`; the environment variable outranks both code
+  paths. The default install and the default loader are unchanged.
+  On a 1.07 MiB document this cut `yaml_to_bin` from 0.279 s to 0.140 s. The
+  loader builds the same Python tree PyYAML builds — same values, types and key
+  order — and hands documents it does not reimplement (anchors, aliases, merge
+  keys, explicit tags, multi-document streams, nesting past the Python
+  recursion limit) and anything rapidyaml cannot parse back to PyYAML, so
+  errors keep PyYAML's wording and position.
+  `ZS_YAML_LOADER=ryml` without rapidyaml installed raises; selecting it from
+  Python warns and falls back to PyYAML, so a downstream tool can enable it by
+  default without a missing wheel breaking a build. See
+  [Faster YAML parsing](README.md#faster-yaml-parsing).
+
 ### Changed
 - The transform cache is no longer a process-lifetime global. `YamlTransformer` cached every transformed document in a class-level dict that nothing in zs-yaml ever cleared, so a consumer converting many documents in one process retained every expanded tree until it called `clear_cache()` itself. The cache now lives for the duration of one transform and is released when that transform returns. Repeated `insert_yaml` includes of the same file inside one document still share a single transformer. Fixes #35
 - `YamlTransformer.clear_cache()` now clears the enclosing cache session instead of a global dict; outside a session it does nothing. Existing calls stay valid.
