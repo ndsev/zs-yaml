@@ -30,6 +30,10 @@ class YamlTransformer:
     Encapsulates a transformed yaml and allows
     accessing the transformed data, original data and metadata..
 
+    ``has_function_invocations`` says whether the source document contained any
+    ``_f:`` calls at all; when it is False, ``data`` is the loaded document
+    unchanged.
+
     Transformed files are cached only for the duration of one transform, so
     converting many documents in one process does not accumulate expanded
     trees. See :meth:`cache_session` to widen that window deliberately.
@@ -90,7 +94,10 @@ class YamlTransformer:
         else:
             self.metadata = None
 
-        # Skip transformation processing if no function calls detected
+        # Skip transformation processing if no function calls detected. The flag
+        # is public so an embedding tool can skip its own post-transform walk
+        # (e.g. extern materialization) for documents that have no `_f:` at all.
+        self.has_function_invocations = needs_transformation
         if needs_transformation:
             self.data = self._process(self.original_data)
         else:
