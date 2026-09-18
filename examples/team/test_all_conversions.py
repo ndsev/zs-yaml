@@ -326,6 +326,130 @@ members:
         raise
 
 
+def test_transform_cache_is_scoped_to_one_transform():
+    """The transform cache must not outlive the transform that filled it.
+
+    ``YamlTransformer`` used to keep every transformed document in a
+    class-level dict for the life of the process, so a consumer converting
+    many documents in one run retained every expanded tree and had to call
+    ``clear_cache()`` to get the memory back. The cache now lives only for
+    the duration of one transform, and ``cache_session()`` is the explicit
+    way to widen that window.
+
+    Three things are pinned here:
+      1. repeated includes of the same file inside one document still share
+         a single transformer (the dedup the cache exists for),
+      2. after a top-level transform returns, the transformers it built are
+         collectable — nothing is retained,
+      3. inside ``cache_session()`` separate transforms do share, and the
+         cache is released when the block exits.
+    """
+    import gc
+    import shutil
+    import weakref
+    from zs_yaml.yaml_transformer import YamlTransformer
+
+    print("\nTesting transform cache scoping...")
+
+    work_dir = tempfile.mkdtemp(prefix='zs_yaml_cache_scope_')
+    shared_path = os.path.join(work_dir, 'shared.yaml')
+    doc_path = os.path.join(work_dir, 'doc.yaml')
+
+    with open(shared_path, 'w') as f:
+        f.write("""street: "Main St"
+city: "Test City"
+country: "Test Country"
+zipCode: 12345
+""")
+
+    with open(doc_path, 'w') as f:
+        f.write("""_meta:
+  schema_module: team.api
+  schema_type: Team
+
+first:
+  _f: insert_yaml
+  _a:
+    file: shared.yaml
+second:
+  _f: insert_yaml
+  _a:
+    file: shared.yaml
+""")
+
+    class CountingTransformer(YamlTransformer):
+        """Records every construction so cache hits become observable."""
+        built = []
+
+        def __init__(self, yaml_file_path, template_args=None, initial_transformations=None):
+            CountingTransformer.built.append(os.path.abspath(yaml_file_path))
+            super().__init__(yaml_file_path, template_args, initial_transformations)
+
+    try:
+        # 1. within-document dedup: shared.yaml is built once, not twice.
+        CountingTransformer.built = []
+        doc = CountingTransformer.get_or_create(doc_path)
+        shared_builds = [p for p in CountingTransformer.built if p == shared_path]
+        assert len(shared_builds) == 1, (
+            f"shared.yaml was transformed {len(shared_builds)} times inside one "
+            f"document; repeated includes must share one transformer"
+        )
+        assert doc.data['first'] == doc.data['second']
+        print("   ✓ repeated includes inside one document share one transformer")
+
+        # 2. nothing survives the transform: the whole graph is collectable.
+        doc_ref = weakref.ref(doc)
+        shared_ref = None
+        del doc
+        gc.collect()
+        assert doc_ref() is None, (
+            "transformer for the document is still reachable after the "
+            "transform returned — the cache is leaking"
+        )
+
+        # Same check for an included file, reached while a session is open.
+        with YamlTransformer.cache_session():
+            included = YamlTransformer.get_or_create(shared_path)
+            shared_ref = weakref.ref(included)
+            del included
+        gc.collect()
+        assert shared_ref() is None, (
+            "transformer for an included file outlived the cache session"
+        )
+        print("   ✓ transformers are collectable once the transform returns")
+
+        # 3. an explicit session shares across separate top-level transforms.
+        CountingTransformer.built = []
+        with YamlTransformer.cache_session():
+            first = CountingTransformer.get_or_create(doc_path)
+            second = CountingTransformer.get_or_create(doc_path)
+            assert first is second, (
+                "cache_session() must serve the same transformer to repeated "
+                "get_or_create() calls"
+            )
+            del first, second
+        doc_builds = [p for p in CountingTransformer.built if p == doc_path]
+        assert len(doc_builds) == 1, (
+            f"doc.yaml was transformed {len(doc_builds)} times inside one "
+            f"cache_session(); the session must serve the cached transformer"
+        )
+
+        # Outside any session the same two calls build twice — that is the
+        # documented default, and what keeps batch consumers from leaking.
+        CountingTransformer.built = []
+        a = CountingTransformer.get_or_create(doc_path)
+        b = CountingTransformer.get_or_create(doc_path)
+        assert a is not b, (
+            "outside cache_session() each call must build a fresh transformer"
+        )
+        del a, b
+        print("   ✓ cache_session() shares across transforms, default does not")
+
+        return True
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+
 def test_descriptor_cache_keyed_on_object_not_id():
     """Regression: _COMPOUND_CACHE must not alias distinct TypeInfos by id().
 
@@ -385,6 +509,7 @@ if __name__ == "__main__":
         test_bin_to_yaml()
         test_bin_to_yaml_with_type_arg()
         test_yaml_to_yaml_with_template_args()
+        test_transform_cache_is_scoped_to_one_transform()
         test_descriptor_cache_keyed_on_object_not_id()
 
         print("\n✅ All conversion tests passed!")

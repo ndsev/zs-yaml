@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- The transform cache is no longer a process-lifetime global. `YamlTransformer` cached every transformed document in a class-level dict that nothing in zs-yaml ever cleared, so a consumer converting many documents in one process retained every expanded tree until it called `clear_cache()` itself. The cache now lives for the duration of one transform and is released when that transform returns. Repeated `insert_yaml` includes of the same file inside one document still share a single transformer. Fixes #35
+- `YamlTransformer.clear_cache()` now clears the enclosing cache session instead of a global dict; outside a session it does nothing. Existing calls stay valid.
+- `examples/perf/benchmark.py` reports a higher `yaml_to_bin` median than before: its repeated runs over the same input used to hit the process-wide cache from run 2 on, so only the first run measured a conversion. Every run now measures one. Output is unchanged and still byte-identical to `perf_reference.bin`.
+
+### Added
+- `YamlTransformer.cache_session()`: a context manager that shares one transform cache across everything inside the block, for batches whose documents pull in the same includes. The cache is released when the block exits.
+
 ## [0.11.0] - 2026-06-09
 
 ### Added
