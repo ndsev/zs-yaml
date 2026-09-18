@@ -59,6 +59,61 @@ zserio_object = yaml_to_pyobj('input.yaml')
 # Use the zserio_object as needed in your application
 ```
 
+### Building From a Tree You Already Have
+
+`data_to_zserio_object` builds a zserio object from an in-memory Python `dict`
+tree, without a file and without a JSON detour. Use it when the tree is already
+in hand — one you assembled yourself, or one `bin_to_dict` returned:
+
+```python
+from team.api import Team
+from zs_yaml import bin_to_dict, data_to_zserio_object
+
+data, meta = bin_to_dict('team.bin', 'team.api', 'Team')
+data['name'] = 'Renamed Team'
+zserio_object = data_to_zserio_object(data, Team)
+```
+
+It is the same path `yaml_to_bin` takes once the YAML has been transformed, so
+the bytes match what writing the tree out and converting the file would produce.
+The tree uses schema names as keys and carries no `_meta`; `extern` fields are
+`{"buffer": [...], "bitSize": n}`, `bytes` fields `{"buffer": [...]}`, and enums
+and bitmasks accept either their string spelling or their numeric value. Types
+that need initialization arguments take them via `init_args`.
+
+`bin_to_dict` takes `skip_nulls=True` to leave unset optional fields out of the
+tree instead of emitting `None` entries for them, which saves a separate
+stripping pass for callers that would discard them anyway. The default is
+`False` — the tree shape is unchanged from earlier releases.
+
+### Serving Extern Bytes From Your Own Cache
+
+A tool that embeds zs-yaml and already serializes the documents it references as
+externs can hand those bytes to `insert_yaml_as_extern` instead of having
+zs-yaml transform and serialize them a second time:
+
+```python
+from zs_yaml import extern_bytes_provider, yaml_to_bin
+
+def lookup(abs_yaml_path, compression_type):
+    # Return (buffer, bit_size), or None to let zs-yaml do the work.
+    return my_cache.get((abs_yaml_path, compression_type))
+
+with extern_bytes_provider(lookup):
+    yaml_to_bin('tile.yaml', 'tile.bin')
+```
+
+`compression_type` arrives as a `CompressionType` or `None`, already resolved
+from whatever the YAML spelled (enum name, integer or member). The provider is
+consulted only for references without `template_args`, since with them the path
+alone does not identify the resulting bytes. Returning `None` declines and the
+normal path runs, so a provider can answer for the documents it knows and ignore
+the rest.
+
+`set_extern_bytes_provider(lookup)` registers one for the rest of the process and
+`set_extern_bytes_provider(None)` unregisters it; `extern_bytes_provider` is the
+scoped form above and restores whatever was registered before.
+
 ### Caching and Batch Conversion
 
 While a document is being transformed, each YAML file it pulls in via
@@ -244,7 +299,7 @@ zs-yaml person.yaml person.bin
 
 zs-yaml comes with several built-in transformation functions that can be used in your YAML files. Here's a brief overview of the available functions:
 
-- `insert_yaml_as_extern`: Includes external YAML content by transforming it to JSON and using zserio. Optionally compresses the produced bytes via `compression_type` (`zlib`, `zstd`, `lz4`, `brotli`; omit or set to `no_compression` for raw). Example:
+- `insert_yaml_as_extern`: Serializes an external YAML document into extern bytes. Optionally compresses the produced bytes via `compression_type` (`zlib`, `zstd`, `lz4`, `brotli`; omit or set to `no_compression` for raw). Example:
   ```yaml
   data:
     _f: insert_yaml_as_extern
@@ -252,6 +307,7 @@ zs-yaml comes with several built-in transformation functions that can be used in
       file: payload.yaml
       compression_type: zstd   # enum name, integer (0-4) or CompressionType member
   ```
+  See [Serving Extern Bytes From Your Own Cache](#serving-extern-bytes-from-your-own-cache) for answering these references from an embedding tool's cache.
 - `insert_yaml`: Inserts YAML content directly from an external file.
 - `repeat_node`: Repeats a specific node a specified number of times.
 - `extract_extern_as_yaml`: Extracts binary data and saves it as an external YAML file. Accepts the same `compression_type` values as `insert_yaml_as_extern` and decompresses the buffer before deserialization.
