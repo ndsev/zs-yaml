@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `data_to_zserio_object(data, imported_type, init_args=None)`: builds a zserio object from an in-memory Python `dict` tree, exported from the top-level `zs_yaml` package. It is the path `yaml_to_bin` already took internally once the YAML was transformed; callers holding the tree no longer have to route it through `json.dumps` + `zserio.from_json_string`. Fixes #33
+- `set_extern_bytes_provider(provider)` and the scoped `extern_bytes_provider(provider)` context manager: an embedding tool that already serializes the documents it references as externs can answer `insert_yaml_as_extern` from its own cache. The provider receives `(abs_yaml_path, compression_type)` with `compression_type` already resolved to a `CompressionType` or `None`, and returns `(buffer, bit_size)` or `None` to decline. Consulted only for references without `template_args`.
+- `bin_to_dict(..., skip_nulls=True)`: leaves unset optional fields out of the returned tree instead of emitting `None` entries. Defaults to `False`, so existing output is unchanged.
+- `YamlTransformer.has_function_invocations`: whether the source document contained any `_f:` call, so a downstream tool can skip its own post-transform walk for plain documents.
+- `examples/team/test_descriptor_cache.py` counts descriptor builds to pin that the cache hits across top-level conversions, and `examples/team/test_data_to_zserio_object.py` pins the new API against the JSON detour and `yaml_to_bin`. Both run in CI.
+- `YamlTransformer.cache_session()`: a context manager that shares one transform cache across everything inside the block, for batches whose documents pull in the same includes. The cache is released when the block exits.
 - Optional `fast` extra that parses YAML with [rapidyaml](https://github.com/biojppm/rapidyaml)
   instead of PyYAML. `pip install zs-yaml[fast]` is the whole opt-in: the loader
   setting defaults to `auto`, which uses rapidyaml when it is importable and
@@ -27,13 +33,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   wheel breaking a build. See
   [Faster YAML parsing](README.md#faster-yaml-parsing).
 
+### Fixed
+- The compound descriptor cache never hit across top-level conversions. It keyed on the `TypeInfo` object, but a generated `type_info()` builds a fresh `TypeInfo` graph on every call, so every conversion rebuilt the whole descriptor tree and left the dead graphs alive as cache keys. It now keys on the generated class, which is stable for the process. Conversion output is unchanged.
+
 ### Changed
+- `insert_yaml_as_extern` builds the zserio object straight from the transformed tree instead of dumping it to a JSON string for zserio to re-parse. Output is unchanged.
+- `insert_yaml` and `repeat_node` copy the transformed tree with a plain recursive walk instead of `copy.deepcopy`, falling back to `copy.deepcopy` for self-referential trees. The copies are still independent; only the route changed.
+- `examples/team/team.zs` gains two structs, `Contact` and `Profile`, that `Team` does not reference. They carry the optional fields the `skip_nulls` test needs; `Team`'s wire format is untouched.
 - The transform cache is no longer a process-lifetime global. `YamlTransformer` cached every transformed document in a class-level dict that nothing in zs-yaml ever cleared, so a consumer converting many documents in one process retained every expanded tree until it called `clear_cache()` itself. The cache now lives for the duration of one transform and is released when that transform returns. Repeated `insert_yaml` includes of the same file inside one document still share a single transformer. Fixes #35
 - `YamlTransformer.clear_cache()` now clears the enclosing cache session instead of a global dict; outside a session it does nothing. Existing calls stay valid.
 - `examples/perf/benchmark.py` reports a higher `yaml_to_bin` median than before: its repeated runs over the same input used to hit the process-wide cache from run 2 on, so only the first run measured a conversion. Every run now measures one. Output is unchanged and still byte-identical to `perf_reference.bin`.
-
-### Added
-- `YamlTransformer.cache_session()`: a context manager that shares one transform cache across everything inside the block, for batches whose documents pull in the same includes. The cache is released when the block exits.
 
 ## [0.11.0] - 2026-06-09
 
