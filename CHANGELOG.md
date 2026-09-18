@@ -9,19 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Optional `fast` extra that parses YAML with [rapidyaml](https://github.com/biojppm/rapidyaml)
-  instead of PyYAML. Install with `pip install zs-yaml[fast]` and select it with
-  `ZS_YAML_LOADER=ryml`, `YamlTransformer(loader="ryml")` or
-  `YamlTransformer.LOADER = "ryml"`; the environment variable outranks both code
-  paths. The default install and the default loader are unchanged.
+  instead of PyYAML. `pip install zs-yaml[fast]` is the whole opt-in: the loader
+  setting defaults to `auto`, which uses rapidyaml when it is importable and
+  PyYAML when it is not, raising and warning about neither. A default install is
+  unaffected. Name a loader outright with `ZS_YAML_LOADER`,
+  `YamlTransformer(loader=...)` or `YamlTransformer.LOADER`, set to `auto`,
+  `pyyaml` or `ryml`; the environment variable outranks both code paths.
   On a 1.07 MiB document this cut `yaml_to_bin` from 0.279 s to 0.140 s. The
   loader builds the same Python tree PyYAML builds — same values, types and key
   order — and hands documents it does not reimplement (anchors, aliases, merge
   keys, explicit tags, multi-document streams, nesting past the Python
   recursion limit) and anything rapidyaml cannot parse back to PyYAML, so
   errors keep PyYAML's wording and position.
-  `ZS_YAML_LOADER=ryml` without rapidyaml installed raises; selecting it from
-  Python warns and falls back to PyYAML, so a downstream tool can enable it by
-  default without a missing wheel breaking a build. See
+  Asking for `ryml` by name when rapidyaml is not installed is reported rather
+  than ignored: `ZS_YAML_LOADER=ryml` raises, and selecting it from Python warns
+  and falls back to PyYAML, so a downstream tool can pin it without a missing
+  wheel breaking a build. See
   [Faster YAML parsing](README.md#faster-yaml-parsing).
 
 ### Changed

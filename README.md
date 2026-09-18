@@ -36,8 +36,8 @@ Install `zs-yaml` using pip:
 python -m pip install --upgrade zs-yaml
 ```
 
-There is an optional `fast` extra that speeds up YAML parsing; see
-[Faster YAML parsing](#faster-yaml-parsing).
+There is an optional `fast` extra that speeds up YAML parsing, and installing
+it is the whole opt-in — see [Faster YAML parsing](#faster-yaml-parsing).
 
 ## Usage
 
@@ -98,11 +98,16 @@ on that step:
 python -m pip install --upgrade 'zs-yaml[fast]'
 ```
 
-Installing the extra does not change anything on its own. Select the loader for
-a run with an environment variable:
+That is the whole opt-in. The default loader setting is `auto`: rapidyaml when
+it is importable, PyYAML when it is not. Nothing else to set, and an install
+without the extra is not an error — `auto` never raises and never warns about a
+missing rapidyaml.
+
+To take the choice out of `auto`'s hands, name a loader. For a run:
 
 ```bash
-ZS_YAML_LOADER=ryml zs-yaml input.yaml output.bin
+ZS_YAML_LOADER=pyyaml zs-yaml input.yaml output.bin   # never rapidyaml
+ZS_YAML_LOADER=ryml   zs-yaml input.yaml output.bin   # rapidyaml or fail
 ```
 
 or from Python, per transformer or as a process-wide default:
@@ -110,12 +115,14 @@ or from Python, per transformer or as a process-wide default:
 ```python
 from zs_yaml import YamlTransformer
 
-YamlTransformer("input.yaml", loader="ryml")   # this document and its includes
-YamlTransformer.LOADER = "ryml"                # every document from here on
+YamlTransformer("input.yaml", loader="pyyaml")   # this document and its includes
+YamlTransformer.LOADER = "ryml"                  # every document from here on
 ```
 
-`ZS_YAML_LOADER` outranks both, so `ZS_YAML_LOADER=pyyaml` turns the fast
-loader off again for a run even if the calling code asked for it.
+`ZS_YAML_LOADER` outranks both, so a person can override for one run what the
+calling code chose. The three names are `auto` (the default), `pyyaml` and
+`ryml`; anything else raises, because a typo should not silently get you a
+loader you did not ask for.
 
 **What you get.** On a 1.07 MiB generated document (5000 records, Apple
 silicon, CPython 3.14, rapidyaml 0.15.2), the parse step goes from 230 ms to
@@ -130,8 +137,8 @@ documents before deciding.
   3.8 through 3.14 on macOS, manylinux and Windows, so a supported interpreter
   installs a wheel and compiles nothing. Anything outside that matrix builds
   rapidyaml from its sdist, which needs a C++ compiler.
-- A second YAML parser in the stack, so a parser bug would show up only for
-  those who enabled it. The output is pinned against PyYAML by
+- A second YAML parser in the stack, on the default path once the extra is
+  installed. The output is pinned against PyYAML by
   `examples/team/test_ryml_loader.py` and by the byte-identical perf reference,
   both run in CI under both loaders.
 - Memory: coerced plain scalars are memoized for the life of the process, up to
@@ -144,11 +151,13 @@ Python recursion limit are not reimplemented; a document using them is handed
 to PyYAML, as is any input rapidyaml cannot parse, so syntax errors keep
 PyYAML's wording, line and column.
 
-**If rapidyaml is not installed.** `ZS_YAML_LOADER=ryml` raises `ImportError` —
-you asked for the loader by name, so a missing dependency is worth hearing
-about. Selecting it from Python instead warns and falls back to PyYAML, so a
-tool built on `zs-yaml` can turn it on by default without a missing wheel
-breaking someone's build.
+**If rapidyaml is not installed.** The default, `auto`, uses PyYAML and says
+nothing — not installing an optional extra is not a mistake. Naming `ryml`
+outright is a different statement, so that one is reported: through the
+environment variable it raises `ImportError`, because whoever set it asked for
+that loader by name; from Python it warns and falls back to PyYAML, so a tool
+built on `zs-yaml` can pin the fast loader without a missing wheel breaking
+someone's build.
 
 ### Notes
 

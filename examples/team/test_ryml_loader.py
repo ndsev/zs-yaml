@@ -11,8 +11,9 @@ conversion takes and nothing else, so what is pinned here is that promise:
     multi-document streams) and inputs it cannot parse come back from PyYAML,
     with PyYAML's own errors;
   * a full team1.yaml -> binary conversion is byte-identical either way;
-  * loader selection behaves as documented, including when rapidyaml is not
-    installed.
+  * loader selection behaves as documented: the default takes rapidyaml when
+    it is installed and PyYAML when it is not, silently either way, while
+    naming "ryml" outright still reports a missing dependency.
 
 The selection tests run with or without rapidyaml. The equivalence tests are
 skipped when it is not installed; run `pip install zs-yaml[fast]` for those.
@@ -449,13 +450,50 @@ class _RapidyamlMissing:
         self.module.ensure_available = self.previous
 
 
-def test_default_is_pyyaml():
+def test_default_follows_what_is_installed():
     print("\nTesting loader selection...")
+    from zs_yaml import _ryml_loader
+
+    assert YamlTransformer.LOADER == "auto", (
+        f"the default loader setting must be 'auto', is {YamlTransformer.LOADER!r}"
+    )
     with _EnvVar(None):
-        assert _yt._resolve_loader(None) is _yt._load_pyyaml, (
-            "the default loader must stay PyYAML"
+        expected = _ryml_loader.load if HAVE_RYML else _yt._load_pyyaml
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            resolved = _yt._resolve_loader(None)
+        assert resolved is expected, (
+            f"with rapidyaml {'installed' if HAVE_RYML else 'absent'} the default "
+            f"must resolve to {expected}, got {resolved}"
         )
-    print("   \u2713 default is PyYAML")
+        assert not caught, (
+            f"the default must be silent either way, warned: "
+            f"{[str(w.message) for w in caught]}"
+        )
+    print(f"   \u2713 default resolves to "
+          f"{'rapidyaml' if HAVE_RYML else 'PyYAML'}, silently")
+
+
+def test_default_never_fails_without_rapidyaml():
+    """'auto' must never be the reason a conversion stops."""
+    with _EnvVar(None), _RapidyamlMissing():
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            resolved = _yt._resolve_loader(None)
+            transformer = YamlTransformer(os.path.join(HERE, 'team1.yaml'))
+        assert resolved is _yt._load_pyyaml, (
+            f"'auto' without rapidyaml must be PyYAML, got {resolved}"
+        )
+        assert not caught, (
+            f"'auto' without rapidyaml must not warn, warned: "
+            f"{[str(w.message) for w in caught]}"
+        )
+        assert transformer.data['name'] == 'Dream Team'
+    with _EnvVar('auto'), _RapidyamlMissing():
+        assert _yt._resolve_loader(None) is _yt._load_pyyaml, (
+            f"{_yt.LOADER_ENV_VAR}=auto without rapidyaml must be PyYAML too"
+        )
+    print("   \u2713 the default neither raises nor warns when rapidyaml is absent")
 
 
 def test_env_var_outranks_code():
@@ -481,7 +519,8 @@ def test_unknown_loader_name_raises():
                 selection()
                 raise AssertionError(f"unknown loader name via {label} did not raise")
             except ValueError as e:
-                assert 'rapidyaml' in str(e) and 'ryml' in str(e), f"unhelpful message: {e}"
+                for name in ("auto", "pyyaml", "ryml"):
+                    assert name in str(e), f"message does not offer {name!r}: {e}"
     with _EnvVar('nonsense'):
         try:
             _yt._resolve_loader(None)
@@ -548,7 +587,8 @@ def test_transform_still_works_without_rapidyaml():
 
 if __name__ == "__main__":
     try:
-        test_default_is_pyyaml()
+        test_default_follows_what_is_installed()
+        test_default_never_fails_without_rapidyaml()
         test_env_var_outranks_code()
         test_unknown_loader_name_raises()
         test_missing_rapidyaml_raises_when_selected_by_env()

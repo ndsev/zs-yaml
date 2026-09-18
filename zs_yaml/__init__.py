@@ -34,12 +34,14 @@ Transformation engine
     you need to drive transformations programmatically rather than via the
     CLI. Defined in :mod:`zs_yaml.yaml_transformer`.
 
-    YAML is parsed with PyYAML by default. Installing the optional ``fast``
-    extra (``pip install zs-yaml[fast]``) adds a rapidyaml-backed loader that
-    builds the same tree in roughly half the time; select it with
-    ``YamlTransformer(..., loader="ryml")``, ``YamlTransformer.LOADER`` or the
-    ``ZS_YAML_LOADER`` environment variable. See the README section "Faster
-    YAML parsing" for the trade-offs.
+    YAML is parsed with PyYAML unless the optional ``fast`` extra
+    (``pip install zs-yaml[fast]``) is installed, in which case a
+    rapidyaml-backed loader builds the same tree in roughly half the time.
+    That is automatic; to name a loader instead of letting it follow the
+    install, pass ``YamlTransformer(..., loader=...)``, set
+    ``YamlTransformer.LOADER`` or set the ``ZS_YAML_LOADER`` environment
+    variable to ``"auto"``, ``"pyyaml"`` or ``"ryml"``. See the README section
+    "Faster YAML parsing" for the trade-offs.
 
 Version info
     :func:`get_version_info`, :data:`__version__`.

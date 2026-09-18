@@ -233,24 +233,33 @@ def _has_merge_key(tree) -> bool:
     return False
 
 
-# Bound on first use, so importing this module without rapidyaml installed
-# does not blow up — only load() requires it.
+# Bound on the first successful probe, so importing this module without
+# rapidyaml installed does not blow up — only load() requires it.
 _NONE = None
+
+# Tri-state: None not probed yet, then True or False. The negative is kept
+# because the default loader setting asks this question once per document and
+# a failed import is not cached by the interpreter — without this, every
+# document in a run without rapidyaml would search sys.path again.
+_available = None
 
 
 def ensure_available():
     """Import rapidyaml, raising ImportError with install instructions if absent."""
-    global _NONE
-    if _NONE is not None:
-        return
-    try:
-        import ryml
-    except ImportError as exc:
+    global _NONE, _available
+    if _available is None:
+        try:
+            import ryml
+        except ImportError:
+            _available = False
+        else:
+            _NONE = ryml.NONE
+            _available = True
+    if not _available:
         raise ImportError(
             "The rapidyaml backend requires the 'fast' extra. "
             "Install with: pip install zs-yaml[fast]"
-        ) from exc
-    _NONE = ryml.NONE
+        )
 
 
 def load(content) -> Any:

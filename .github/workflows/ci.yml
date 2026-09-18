@@ -81,6 +81,16 @@ jobs:
           cd examples/team
           python test_pyobj_to_yaml.py
           python test_all_conversions.py
+      # The steps above this point ran on the default loader, which is now
+      # rapidyaml because the extra is installed. This pins that naming the
+      # PyYAML loader still works once rapidyaml is on the machine.
+      - name: Re-run team conversions with ZS_YAML_LOADER=pyyaml
+        env:
+          ZS_YAML_LOADER: pyyaml
+        run: |
+          cd examples/team
+          python test_pyobj_to_yaml.py
+          python test_all_conversions.py
       - name: Generate schema API for extern_compression example
         run: |
           cd examples/extern_compression

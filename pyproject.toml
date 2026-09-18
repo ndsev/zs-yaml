@@ -34,9 +34,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Opt-in YAML parsing acceleration. rapidyaml ships wheels for CPython 3.8
-# through 3.14 on macOS, manylinux and Windows, so installing this extra does
-# not build anything from source on a supported interpreter.
+# Opt-in YAML parsing acceleration: installing this extra is the opt-in, and
+# the default loader setting picks rapidyaml up on its own. rapidyaml ships
+# wheels for CPython 3.8 through 3.14 on macOS, manylinux and Windows, so this
+# does not build anything from source on a supported interpreter.
 fast = [
     "rapidyaml>=0.12.0",
 ]
