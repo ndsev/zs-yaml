@@ -36,6 +36,9 @@ Install `zs-yaml` using pip:
 python -m pip install --upgrade zs-yaml
 ```
 
+There is an optional `fast` extra that speeds up YAML parsing, and installing
+it is the whole opt-in — see [Faster YAML parsing](#faster-yaml-parsing).
+
 ## Usage
 
 The main entry point for the application is `zs-yaml`. It accepts arguments for specifying the input and output file paths. You can run the application as follows:
@@ -58,6 +61,158 @@ zserio_object = yaml_to_pyobj('input.yaml')
 
 # Use the zserio_object as needed in your application
 ```
+
+### Building From a Tree You Already Have
+
+`data_to_zserio_object` builds a zserio object from an in-memory Python `dict`
+tree, without a file and without a JSON detour. Use it when the tree is already
+in hand — one you assembled yourself, or one `bin_to_dict` returned:
+
+```python
+from team.api import Team
+from zs_yaml import bin_to_dict, data_to_zserio_object
+
+data, meta = bin_to_dict('team.bin', 'team.api', 'Team')
+data['name'] = 'Renamed Team'
+zserio_object = data_to_zserio_object(data, Team)
+```
+
+It is the same path `yaml_to_bin` takes once the YAML has been transformed, so
+the bytes match what writing the tree out and converting the file would produce.
+The tree uses schema names as keys and carries no `_meta`; `extern` fields are
+`{"buffer": [...], "bitSize": n}`, `bytes` fields `{"buffer": [...]}`, and enums
+and bitmasks accept either their string spelling or their numeric value. Types
+that need initialization arguments take them via `init_args`.
+
+`bin_to_dict` takes `skip_nulls=True` to leave unset optional fields out of the
+tree instead of emitting `None` entries for them, which saves a separate
+stripping pass for callers that would discard them anyway. The default is
+`False` — the tree shape is unchanged from earlier releases.
+
+### Serving Extern Bytes From Your Own Cache
+
+A tool that embeds zs-yaml and already serializes the documents it references as
+externs can hand those bytes to `insert_yaml_as_extern` instead of having
+zs-yaml transform and serialize them a second time:
+
+```python
+from zs_yaml import extern_bytes_provider, yaml_to_bin
+
+def lookup(abs_yaml_path, compression_type):
+    # Return (buffer, bit_size), or None to let zs-yaml do the work.
+    return my_cache.get((abs_yaml_path, compression_type))
+
+with extern_bytes_provider(lookup):
+    yaml_to_bin('tile.yaml', 'tile.bin')
+```
+
+`compression_type` arrives as a `CompressionType` or `None`, already resolved
+from whatever the YAML spelled (enum name, integer or member). The provider is
+consulted only for references without `template_args`, since with them the path
+alone does not identify the resulting bytes. Returning `None` declines and the
+normal path runs, so a provider can answer for the documents it knows and ignore
+the rest.
+
+`set_extern_bytes_provider(lookup)` registers one for the rest of the process and
+`set_extern_bytes_provider(None)` unregisters it; `extern_bytes_provider` is the
+scoped form above and restores whatever was registered before.
+
+### Caching and Batch Conversion
+
+While a document is being transformed, each YAML file it pulls in via
+`insert_yaml` is transformed once and reused, so a file included several times
+costs one parse. That cache is dropped when the conversion returns: converting
+many documents in one process does not accumulate their expanded trees, and
+there is nothing a caller has to remember to clear.
+
+If several documents share the same includes and you want that work done once,
+open a session around the batch. Everything cached inside is released when the
+block exits:
+
+```python
+from zs_yaml import YamlTransformer, yaml_to_bin
+
+with YamlTransformer.cache_session():
+    for src, dst in jobs:
+        yaml_to_bin(src, dst)
+```
+
+A session assumes the files it reads do not change while it is open. If a
+transformation writes a YAML file that a later include reads back — as
+`extract_extern_as_yaml` does — call `YamlTransformer.clear_cache()` at that
+point, or keep the session narrower. Outside a session `clear_cache()` has
+nothing to clear and does nothing.
+
+### Faster YAML parsing
+
+Parsing the YAML is the largest single cost of a `yaml -> bin` conversion. The
+`fast` extra swaps PyYAML for [rapidyaml](https://github.com/biojppm/rapidyaml)
+on that step:
+
+```bash
+python -m pip install --upgrade 'zs-yaml[fast]'
+```
+
+That is the whole opt-in. The default loader setting is `auto`: rapidyaml when
+it is importable, PyYAML when it is not. Nothing else to set, and an install
+without the extra is not an error — `auto` never raises and never warns about a
+missing rapidyaml.
+
+To take the choice out of `auto`'s hands, name a loader. For a run:
+
+```bash
+ZS_YAML_LOADER=pyyaml zs-yaml input.yaml output.bin   # never rapidyaml
+ZS_YAML_LOADER=ryml   zs-yaml input.yaml output.bin   # rapidyaml or fail
+```
+
+or from Python, per transformer or as a process-wide default:
+
+```python
+from zs_yaml import YamlTransformer
+
+YamlTransformer("input.yaml", loader="pyyaml")   # this document and its includes
+YamlTransformer.LOADER = "ryml"                  # every document from here on
+```
+
+`ZS_YAML_LOADER` outranks both, so a person can override for one run what the
+calling code chose. The three names are `auto` (the default), `pyyaml` and
+`ryml`; anything else raises, because a typo should not silently get you a
+loader you did not ask for.
+
+**What you get.** On a 1.07 MiB generated document (5000 records, Apple
+silicon, CPython 3.14, rapidyaml 0.15.2), the parse step goes from 230 ms to
+93 ms and the whole `yaml_to_bin` from 0.279 s to 0.140 s — a little under 2x
+end to end. The gain scales with document size and with how repetitive the
+scalars are; on a small file it is not worth measuring. Measure your own
+documents before deciding.
+
+**What it costs.**
+
+- Another dependency, and a binary one. rapidyaml publishes wheels for CPython
+  3.8 through 3.14 on macOS, manylinux and Windows, so a supported interpreter
+  installs a wheel and compiles nothing. Anything outside that matrix builds
+  rapidyaml from its sdist, which needs a C++ compiler.
+- A second YAML parser in the stack, on the default path once the extra is
+  installed. The output is pinned against PyYAML by
+  `examples/team/test_ryml_loader.py` and by the byte-identical perf reference,
+  both run in CI under both loaders.
+- Memory: coerced plain scalars are memoized for the life of the process, up to
+  about a million distinct values.
+
+**What it does not change.** The loader builds the same Python tree PyYAML
+builds — same values, same types, same key order. Anchors, aliases, merge keys,
+explicit tags, multi-document streams and documents nested deeper than the
+Python recursion limit are not reimplemented; a document using them is handed
+to PyYAML, as is any input rapidyaml cannot parse, so syntax errors keep
+PyYAML's wording, line and column.
+
+**If rapidyaml is not installed.** The default, `auto`, uses PyYAML and says
+nothing — not installing an optional extra is not a mistake. Naming `ryml`
+outright is a different statement, so that one is reported: through the
+environment variable it raises `ImportError`, because whoever set it asked for
+that loader by name; from Python it warns and falls back to PyYAML, so a tool
+built on `zs-yaml` can pin the fast loader without a missing wheel breaking
+someone's build.
 
 ### Notes
 
@@ -218,7 +373,7 @@ zs-yaml person.yaml person.bin
 
 zs-yaml comes with several built-in transformation functions that can be used in your YAML files. Here's a brief overview of the available functions:
 
-- `insert_yaml_as_extern`: Includes external YAML content by transforming it to JSON and using zserio. Optionally compresses the produced bytes via `compression_type` (`zlib`, `zstd`, `lz4`, `brotli`; omit or set to `no_compression` for raw). Example:
+- `insert_yaml_as_extern`: Serializes an external YAML document into extern bytes. Optionally compresses the produced bytes via `compression_type` (`zlib`, `zstd`, `lz4`, `brotli`; omit or set to `no_compression` for raw). Example:
   ```yaml
   data:
     _f: insert_yaml_as_extern
@@ -226,6 +381,7 @@ zs-yaml comes with several built-in transformation functions that can be used in
       file: payload.yaml
       compression_type: zstd   # enum name, integer (0-4) or CompressionType member
   ```
+  See [Serving Extern Bytes From Your Own Cache](#serving-extern-bytes-from-your-own-cache) for answering these references from an embedding tool's cache.
 - `insert_yaml`: Inserts YAML content directly from an external file.
 - `repeat_node`: Repeats a specific node a specified number of times.
 - `extract_extern_as_yaml`: Extracts binary data and saves it as an external YAML file. Accepts the same `compression_type` values as `insert_yaml_as_extern` and decompresses the buffer before deserialization.

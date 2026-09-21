@@ -63,6 +63,46 @@ jobs:
             echo "Conversion tests failed"
             exit 1
           fi
+      - name: Test data_to_zserio_object public API
+        run: |
+          cd examples/team
+          python test_data_to_zserio_object.py
+      - name: Test descriptor cache hits across conversions
+        run: |
+          cd examples/team
+          python test_descriptor_cache.py
+      - name: Test loader selection without the fast extra
+        run: |
+          cd examples/team
+          python test_ryml_loader.py
+      - name: Install the fast extra
+        run: |
+          pip install -e .[fast]
+      - name: Test rapidyaml loader equivalence
+        run: |
+          cd examples/team
+          python test_ryml_loader.py
+      - name: Re-run team conversions with ZS_YAML_LOADER=ryml
+        env:
+          ZS_YAML_LOADER: ryml
+        run: |
+          cd examples/team
+          python test_pyobj_to_yaml.py
+          python test_all_conversions.py
+          python test_data_to_zserio_object.py
+          python test_descriptor_cache.py
+      # The steps above this point ran on the default loader, which is now
+      # rapidyaml because the extra is installed. This pins that naming the
+      # PyYAML loader still works once rapidyaml is on the machine.
+      - name: Re-run team conversions with ZS_YAML_LOADER=pyyaml
+        env:
+          ZS_YAML_LOADER: pyyaml
+        run: |
+          cd examples/team
+          python test_pyobj_to_yaml.py
+          python test_all_conversions.py
+          python test_data_to_zserio_object.py
+          python test_descriptor_cache.py
       - name: Generate schema API for extern_compression example
         run: |
           cd examples/extern_compression
@@ -77,6 +117,12 @@ jobs:
             echo "Compression tests failed"
             exit 1
           fi
+      - name: Re-run extern compression with ZS_YAML_LOADER=ryml
+        env:
+          ZS_YAML_LOADER: ryml
+        run: |
+          cd examples/extern_compression
+          PYTHONPATH="$PWD/zs_gen_api" python test_compression.py
       - name: Generate schema API for perf example
         run: |
           cd examples/perf
@@ -89,6 +135,12 @@ jobs:
         run: |
           cd examples/perf
           python test_fast_path.py
+      - name: Perf regression - byte-identical reference with ZS_YAML_LOADER=ryml
+        env:
+          ZS_YAML_LOADER: ryml
+        run: |
+          cd examples/perf
+          python benchmark.py
       - name: Build package
         run: |
           python -m build

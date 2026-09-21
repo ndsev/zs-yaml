@@ -1,3 +1,4 @@
+from contextlib import contextmanager
 from functools import reduce
 import copy
 import importlib
@@ -14,6 +15,43 @@ from enum import Enum
 
 # Cache to store loaded YAML/JSON files
 _file_cache = {}
+
+
+# Types a YAML load produces that are immutable, so sharing them between the
+# original and the copy is safe. `copy.deepcopy` returns these as-is too.
+_ATOMIC_TYPES = (str, int, float, bool, bytes, type(None))
+
+
+def _copy_yaml_tree(node):
+    """Copy a tree of plain dicts, lists and immutable scalars.
+
+    Faster than ``copy.deepcopy`` because it skips the generic dispatch and the
+    memo bookkeeping, neither of which a tree that came out of a YAML loader
+    needs. Anything else -- a dict/list subclass, a tuple, a set, an object a
+    custom transformation put in the tree -- is handed to ``copy.deepcopy``, so
+    the result is as independent of the original as a full deepcopy would be.
+    """
+    cls = node.__class__
+    if cls is dict:
+        return {key: _copy_yaml_tree(value) for key, value in node.items()}
+    if cls is list:
+        return [_copy_yaml_tree(value) for value in node]
+    if cls in _ATOMIC_TYPES:
+        return node
+    return copy.deepcopy(node)
+
+
+def _deep_copy_data(node):
+    """Copy a transformed tree, falling back to ``deepcopy`` for cyclic ones.
+
+    A self-referential tree (a recursive YAML anchor) would make the plain
+    recursion run to the stack limit; ``copy.deepcopy`` handles it via its memo.
+    """
+    try:
+        return _copy_yaml_tree(node)
+    except RecursionError:
+        return copy.deepcopy(node)
+
 
 class CompressionType(Enum):
     NO_COMPRESSION = 0
@@ -71,9 +109,62 @@ def _resolve_compression_type(compression_type):
     raise ValueError("compression_type must be a CompressionType enum, string, or integer value")
 
 
+_extern_bytes_provider = None
+
+
+def set_extern_bytes_provider(provider):
+    """
+    Register a callable that can answer ``insert_yaml_as_extern`` from a cache.
+
+    A tool that embeds zs-yaml and already compiles the referenced documents on
+    its own (a map builder that serializes every layer once, then references
+    some of them as externs) can hand those bytes back here, so zs-yaml does not
+    transform and serialize the same document a second time.
+
+    The provider is consulted only for references without ``template_args``: with
+    template arguments the produced bytes depend on the substitution, which the
+    path alone does not identify.
+
+    Args:
+        provider: Callable ``(abs_yaml_path, compression_type) -> (buffer, bit_size)``
+            returning ``None`` to decline (zs-yaml then serializes as usual), or
+            ``None`` to unregister. ``abs_yaml_path`` is an absolute path;
+            ``compression_type`` is a :class:`CompressionType` or ``None``,
+            already resolved from whatever the YAML spelled (enum, string or
+            integer). ``buffer`` is a sequence of byte values and ``bit_size`` an
+            int, the same pair this function otherwise produces.
+
+    The registration is process-wide and is not restored on its own; see
+    :func:`extern_bytes_provider` for a scoped form.
+    """
+    global _extern_bytes_provider
+    _extern_bytes_provider = provider
+
+
+@contextmanager
+def extern_bytes_provider(provider):
+    """
+    Register an extern-bytes provider for the duration of a block.
+
+    Restores whatever was registered before, including nothing::
+
+        with extern_bytes_provider(my_cache.lookup):
+            yaml_to_bin("tile.yaml", "tile.bin")
+
+    Args:
+        provider: Same contract as :func:`set_extern_bytes_provider`.
+    """
+    previous = _extern_bytes_provider
+    set_extern_bytes_provider(provider)
+    try:
+        yield provider
+    finally:
+        set_extern_bytes_provider(previous)
+
+
 def insert_yaml_as_extern(transformer, file, template_args=None, compression_type=None):
     """
-    Include external YAML by transforming it to JSON and using zserio.
+    Serialize an external YAML document into extern bytes.
 
     Args:
         transformer (YamlTransformer): The transformer instance.
@@ -91,8 +182,29 @@ def insert_yaml_as_extern(transformer, file, template_args=None, compression_typ
     ct_enum = _resolve_compression_type(compression_type)
 
     abs_path = transformer.resolve_path(file)
+
+    # A registered provider may already hold these bytes; see
+    # set_extern_bytes_provider. Skipped when template_args are in play,
+    # because then the path alone does not identify the produced bytes.
+    if _extern_bytes_provider is not None and not template_args:
+        cached = _extern_bytes_provider(os.path.abspath(abs_path), ct_enum)
+        if cached is not None:
+            buffer, bit_size = cached
+            # Normalize to a list so the tree stays the same shape (and stays
+            # JSON-serializable) whether or not the provider answered.
+            if type(buffer) is not list:
+                buffer = list(buffer)
+            return {"buffer": buffer, "bitSize": bit_size}
+
     try:
-        external_transformer = transformer.__class__(abs_path, template_args, initial_transformations=transformer.transformations)
+        # An included document is transformed with the loader its includer
+        # was given, so one selection covers the whole tree. The import is
+        # deferred because yaml_transformer imports this module in turn.
+        from zs_yaml.yaml_transformer import _loader_kwarg
+        external_transformer = transformer.__class__(
+            abs_path, template_args,
+            initial_transformations=transformer.transformations,
+            **_loader_kwarg(getattr(transformer, '_loader_name', None)))
     except TransformationError:
         # Re-raise as-is to preserve the file context
         raise
@@ -115,13 +227,15 @@ def insert_yaml_as_extern(transformer, file, template_args=None, compression_typ
             file_path=abs_path
         )
 
-    json_string = json.dumps(processed_data)
-
-    # Convert JSON to binary using zserio
+    # Build the zserio object straight from the transformed tree. The previous
+    # route dumped it to a JSON string and let zserio re-parse that text, which
+    # dominated this function's cost on large documents.
     try:
+        from .convert import data_to_zserio_object
+
         module = importlib.import_module(schema_module)
         ImportedType = getattr(module, schema_type)
-        zserio_object = zserio.from_json_string(ImportedType, json_string)
+        zserio_object = data_to_zserio_object(processed_data, ImportedType)
     except Exception as e:
         # Try to extract more specific error info
         error_msg = str(e)
@@ -177,7 +291,9 @@ def insert_yaml(transformer, file, node_path='', template_args=None, cache_file=
 
     abs_path = os.path.abspath(os.path.join(os.path.dirname(transformer.yaml_file_path), file))
     try:
-        transformed_yaml = transformer.__class__.get_or_create(abs_path, template_args, transformer.transformations)
+        transformed_yaml = transformer.__class__.get_or_create(
+            abs_path, template_args, transformer.transformations,
+            loader=getattr(transformer, '_loader_name', None))
     except TransformationError:
         # Re-raise as-is to preserve the file context
         raise
@@ -191,11 +307,9 @@ def insert_yaml(transformer, file, node_path='', template_args=None, cache_file=
     data = transformed_yaml.data
 
     if not node_path:
-        # Deep copy is not good from performance point of
-        # view but it still avoids loading the file again and
-        # again and the nodes don't appear as alias but are
-        # are really copies when used multiple times
-        return copy.deepcopy(data)
+        # Copy so the cached tree stays pristine when a caller mutates the
+        # result, and so repeated use produces real copies rather than aliases
+        return _deep_copy_data(data)
 
     # Parse the path and extract the node
     parsed_path = []
@@ -235,7 +349,7 @@ def repeat_node(transformer, node, count):
     Returns:
         list: A list containing the repeated node.
     """
-    return [copy.deepcopy(node) for _ in range(count)]
+    return [_deep_copy_data(node) for _ in range(count)]
 
 
 def extract_extern_as_yaml(transformer, buffer, bitSize, schema_module, schema_type, file_name, compression_type=None, remove_nulls=False):

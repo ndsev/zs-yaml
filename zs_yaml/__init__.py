@@ -29,10 +29,41 @@ Conversion entry points
     Defined in :mod:`zs_yaml.convert`; advanced helpers
     (``yaml_to_yaml``, ``yaml_to_pyobj``, ``pyobj_to_yaml``) live there too.
 
+In-memory conversion
+    :func:`data_to_zserio_object` builds a zserio object from a transformed
+    Python ``dict`` tree, without a file and without a JSON detour. Use it
+    when you already hold the tree — e.g. one you assembled yourself or one
+    :func:`bin_to_dict` returned:
+
+    .. code-block:: python
+
+        from team.api import Team
+        from zs_yaml import data_to_zserio_object
+
+        obj = data_to_zserio_object(data, Team)
+
 Transformation engine
     :class:`YamlTransformer` and :exc:`TransformationError` — for use when
     you need to drive transformations programmatically rather than via the
     CLI. Defined in :mod:`zs_yaml.yaml_transformer`.
+    :attr:`YamlTransformer.has_function_invocations` says whether the document
+    contained any ``_f:`` calls at all.
+
+Extern-bytes hook
+    :func:`set_extern_bytes_provider` (and the scoped
+    :func:`extern_bytes_provider`) let an embedding tool answer
+    ``insert_yaml_as_extern`` from its own cache instead of having zs-yaml
+    serialize the referenced document again. Defined in
+    :mod:`zs_yaml.built_in_transformations`.
+
+    YAML is parsed with PyYAML unless the optional ``fast`` extra
+    (``pip install zs-yaml[fast]``) is installed, in which case a
+    rapidyaml-backed loader builds the same tree in roughly half the time.
+    That is automatic; to name a loader instead of letting it follow the
+    install, pass ``YamlTransformer(..., loader=...)``, set
+    ``YamlTransformer.LOADER`` or set the ``ZS_YAML_LOADER`` environment
+    variable to ``"auto"``, ``"pyyaml"`` or ``"ryml"``. See the README section
+    "Faster YAML parsing" for the trade-offs.
 
 Version info
     :func:`get_version_info`, :data:`__version__`.
@@ -53,7 +84,15 @@ Most users will reach for the CLI rather than this Python API:
     zs-yaml input.bin  output.yaml
 """
 
-from .convert import yaml_to_json, yaml_to_bin, bin_to_yaml, bin_to_dict, json_to_yaml
+from .convert import (
+    yaml_to_json,
+    yaml_to_bin,
+    bin_to_yaml,
+    bin_to_dict,
+    json_to_yaml,
+    data_to_zserio_object,
+)
+from .built_in_transformations import extern_bytes_provider, set_extern_bytes_provider
 from .yaml_transformer import YamlTransformer, TransformationError
 
 try:
@@ -79,9 +118,13 @@ __all__ = [
     "yaml_to_json",
     "json_to_yaml",
     "bin_to_dict",
+    "data_to_zserio_object",
     # Transformation engine
     "YamlTransformer",
     "TransformationError",
+    # Extern-bytes hook
+    "set_extern_bytes_provider",
+    "extern_bytes_provider",
     # Version info
     "get_version_info",
     "__version__",

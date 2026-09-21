@@ -13,7 +13,10 @@ sys.path.insert(0, os.path.join(SCRIPT_DIR, 'zs_gen_api'))
 from zs_yaml.built_in_transformations import (
     CompressionType,
     _compress,
+    extern_bytes_provider,
     extract_extern_as_yaml,
+    insert_yaml_as_extern,
+    set_extern_bytes_provider,
 )
 from zs_yaml.convert import yaml_to_bin, bin_to_dict
 from zs_yaml.yaml_transformer import YamlTransformer
@@ -139,11 +142,113 @@ def test_roundtrip_via_extract_extern():
             print(f"   ✓ roundtrip[{name}] ok")
 
 
+def test_extern_bytes_provider():
+    """A registered provider answers insert_yaml_as_extern instead of zs-yaml."""
+    print("\nTesting the extern-bytes provider hook...")
+
+    payload_abs = os.path.join(SCRIPT_DIR, 'payload.yaml')
+    seen = []
+
+    with tempfile.TemporaryDirectory() as td:
+        wrapper_path = os.path.join(td, 'wrapper.yaml')
+        with open(wrapper_path, 'w') as f:
+            f.write(_wrapper_yaml(1, payload_abs))  # ZLIB
+
+        # Baseline: what zs-yaml produces with no provider registered.
+        baseline_bin = os.path.join(td, 'baseline.bin')
+        yaml_to_bin(wrapper_path, baseline_bin)
+        baseline, _ = bin_to_dict(baseline_bin, 'extern_compression.api', 'CompressedBlob')
+        baseline_extern = baseline['data']
+
+        def declining_provider(path, compression_type):
+            seen.append((path, compression_type))
+            return None
+
+        with extern_bytes_provider(declining_provider):
+            declined_bin = os.path.join(td, 'declined.bin')
+            yaml_to_bin(wrapper_path, declined_bin)
+
+        assert seen == [(os.path.abspath(payload_abs), CompressionType.ZLIB)], (
+            f"provider was called with {seen!r}; expected one call with the "
+            f"absolute payload path and the resolved CompressionType"
+        )
+        with open(baseline_bin, 'rb') as a, open(declined_bin, 'rb') as b:
+            assert a.read() == b.read(), (
+                "a provider that declines must leave the output unchanged"
+            )
+        print("   ✓ provider receives (abs path, resolved CompressionType); "
+              "declining changes nothing")
+
+        # A provider that answers must have its bytes used verbatim.
+        sentinel = ([1, 2, 3, 4], 32)
+
+        with extern_bytes_provider(lambda path, ct: sentinel):
+            served_bin = os.path.join(td, 'served.bin')
+            yaml_to_bin(wrapper_path, served_bin)
+
+        served, _ = bin_to_dict(served_bin, 'extern_compression.api', 'CompressedBlob')
+        assert served['data']['buffer'] == sentinel[0], (
+            f"provider bytes not used: got {served['data']['buffer']!r}"
+        )
+        assert served['data']['bitSize'] == sentinel[1]
+        assert served['data'] != baseline_extern, (
+            "the sentinel should differ from what zs-yaml produces, otherwise "
+            "this assertion proves nothing"
+        )
+        print("   ✓ provider bytes are used verbatim")
+
+        # Calling insert_yaml_as_extern directly needs a host transformer that
+        # does not itself contain an extern reference, otherwise building it
+        # would consult the provider too.
+        host_path = os.path.join(td, 'host.yaml')
+        with open(host_path, 'w') as f:
+            f.write("_meta:\n  schema_module: extern_compression.api\n"
+                    "  schema_type: Payload\n")
+        host = YamlTransformer(host_path)
+
+        # bytes are accepted and normalized to a list, so the tree keeps the
+        # same shape (and stays JSON-serializable) either way.
+        with extern_bytes_provider(lambda path, ct: (b'\x01\x02\x03\x04', 32)):
+            result = insert_yaml_as_extern(host, payload_abs, compression_type=1)
+        assert result == {"buffer": [1, 2, 3, 4], "bitSize": 32}, (
+            f"bytes from a provider were not normalized to a list: {result!r}"
+        )
+        print("   ✓ a bytes buffer is normalized to a list of ints")
+
+        # With template_args the path alone does not identify the bytes, so the
+        # provider must not be consulted.
+        calls = []
+        with extern_bytes_provider(lambda path, ct: calls.append(path) or sentinel):
+            with_args = insert_yaml_as_extern(
+                host, payload_abs, template_args={'unused': 'x'}, compression_type=1,
+            )
+        assert not calls, f"provider consulted despite template_args: {calls!r}"
+        assert with_args == baseline_extern, (
+            "bypassing the provider must produce what zs-yaml produces anyway"
+        )
+        print("   ✓ not consulted when template_args are given")
+
+    # The context manager restores whatever was registered before.
+    marker = lambda path, ct: None
+    set_extern_bytes_provider(marker)
+    try:
+        with extern_bytes_provider(lambda path, ct: None):
+            pass
+        import zs_yaml.built_in_transformations as bt
+        assert bt._extern_bytes_provider is marker, (
+            "extern_bytes_provider() did not restore the previous provider"
+        )
+    finally:
+        set_extern_bytes_provider(None)
+    print("   ✓ extern_bytes_provider() restores the previous registration")
+
+
 if __name__ == "__main__":
     try:
         test_compress_unit()
         test_compression_type_arg_resolution()
         test_roundtrip_via_extract_extern()
+        test_extern_bytes_provider()
         print("\n✅ All compression tests passed!")
         sys.exit(0)
     except Exception as e:

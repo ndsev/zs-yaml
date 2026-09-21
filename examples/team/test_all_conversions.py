@@ -326,16 +326,143 @@ members:
         raise
 
 
-def test_descriptor_cache_keyed_on_object_not_id():
-    """Regression: _COMPOUND_CACHE must not alias distinct TypeInfos by id().
+def test_transform_cache_is_scoped_to_one_transform():
+    """The transform cache must not outlive the transform that filled it.
 
-    Previously the cache keyed on ``id(type_info)`` while only storing the
-    descriptor. Each call to a generated ``type_info()`` returns a fresh
-    ``TypeInfo`` instance, so after GC reclaims one, a later call can land at
-    the same memory address and the cache returns a stale descriptor —
-    surfacing as ``'X' object has no attribute 'y'`` errors during
-    ``bin_to_dict`` / ``bin_to_yaml`` in long-running processes that load
-    multiple schemas.
+    ``YamlTransformer`` used to keep every transformed document in a
+    class-level dict for the life of the process, so a consumer converting
+    many documents in one run retained every expanded tree and had to call
+    ``clear_cache()`` to get the memory back. The cache now lives only for
+    the duration of one transform, and ``cache_session()`` is the explicit
+    way to widen that window.
+
+    Three things are pinned here:
+      1. repeated includes of the same file inside one document still share
+         a single transformer (the dedup the cache exists for),
+      2. after a top-level transform returns, the transformers it built are
+         collectable — nothing is retained,
+      3. inside ``cache_session()`` separate transforms do share, and the
+         cache is released when the block exits.
+    """
+    import gc
+    import shutil
+    import weakref
+    from zs_yaml.yaml_transformer import YamlTransformer
+
+    print("\nTesting transform cache scoping...")
+
+    work_dir = tempfile.mkdtemp(prefix='zs_yaml_cache_scope_')
+    shared_path = os.path.join(work_dir, 'shared.yaml')
+    doc_path = os.path.join(work_dir, 'doc.yaml')
+
+    with open(shared_path, 'w') as f:
+        f.write("""street: "Main St"
+city: "Test City"
+country: "Test Country"
+zipCode: 12345
+""")
+
+    with open(doc_path, 'w') as f:
+        f.write("""_meta:
+  schema_module: team.api
+  schema_type: Team
+
+first:
+  _f: insert_yaml
+  _a:
+    file: shared.yaml
+second:
+  _f: insert_yaml
+  _a:
+    file: shared.yaml
+""")
+
+    class CountingTransformer(YamlTransformer):
+        """Records every construction so cache hits become observable."""
+        built = []
+
+        def __init__(self, yaml_file_path, template_args=None, initial_transformations=None):
+            CountingTransformer.built.append(os.path.abspath(yaml_file_path))
+            super().__init__(yaml_file_path, template_args, initial_transformations)
+
+    try:
+        # 1. within-document dedup: shared.yaml is built once, not twice.
+        CountingTransformer.built = []
+        doc = CountingTransformer.get_or_create(doc_path)
+        shared_builds = [p for p in CountingTransformer.built if p == shared_path]
+        assert len(shared_builds) == 1, (
+            f"shared.yaml was transformed {len(shared_builds)} times inside one "
+            f"document; repeated includes must share one transformer"
+        )
+        assert doc.data['first'] == doc.data['second']
+        print("   ✓ repeated includes inside one document share one transformer")
+
+        # 2. nothing survives the transform: the whole graph is collectable.
+        doc_ref = weakref.ref(doc)
+        shared_ref = None
+        del doc
+        gc.collect()
+        assert doc_ref() is None, (
+            "transformer for the document is still reachable after the "
+            "transform returned — the cache is leaking"
+        )
+
+        # Same check for an included file, reached while a session is open.
+        with YamlTransformer.cache_session():
+            included = YamlTransformer.get_or_create(shared_path)
+            shared_ref = weakref.ref(included)
+            del included
+        gc.collect()
+        assert shared_ref() is None, (
+            "transformer for an included file outlived the cache session"
+        )
+        print("   ✓ transformers are collectable once the transform returns")
+
+        # 3. an explicit session shares across separate top-level transforms.
+        CountingTransformer.built = []
+        with YamlTransformer.cache_session():
+            first = CountingTransformer.get_or_create(doc_path)
+            second = CountingTransformer.get_or_create(doc_path)
+            assert first is second, (
+                "cache_session() must serve the same transformer to repeated "
+                "get_or_create() calls"
+            )
+            del first, second
+        doc_builds = [p for p in CountingTransformer.built if p == doc_path]
+        assert len(doc_builds) == 1, (
+            f"doc.yaml was transformed {len(doc_builds)} times inside one "
+            f"cache_session(); the session must serve the cached transformer"
+        )
+
+        # Outside any session the same two calls build twice — that is the
+        # documented default, and what keeps batch consumers from leaking.
+        CountingTransformer.built = []
+        a = CountingTransformer.get_or_create(doc_path)
+        b = CountingTransformer.get_or_create(doc_path)
+        assert a is not b, (
+            "outside cache_session() each call must build a fresh transformer"
+        )
+        del a, b
+        print("   ✓ cache_session() shares across transforms, default does not")
+
+        return True
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+
+def test_descriptor_cache_keyed_on_object_not_id():
+    """Regression: _COMPOUND_CACHE must not alias distinct types by id().
+
+    Once upon a time the cache keyed on ``id(type_info)``. Each call to a
+    generated ``type_info()`` returns a fresh ``TypeInfo`` instance, so after
+    GC reclaims one, a later call can land at the same memory address and the
+    cache returns a stale descriptor — surfacing as ``'X' object has no
+    attribute 'y'`` errors during ``bin_to_dict`` / ``bin_to_yaml`` in
+    long-running processes that load multiple schemas.
+
+    The cache now keys on the generated class, which is held strongly and
+    cannot have its identity recycled. See ``test_descriptor_cache.py`` for
+    the cache-hit side of that key choice.
 
     We simulate the collision by seeding the cache with an int key matching
     ``id(type_info)`` whose value is an unrelated descriptor, then verify the
@@ -356,9 +483,9 @@ def test_descriptor_cache_keyed_on_object_not_id():
 
     # Simulate the previous bug: an int key matching id(ti_person) carrying
     # an unrelated descriptor (as if a freed TypeInfo had occupied that
-    # address before GC reclaimed it). A correctly-keyed cache (keyed on the
-    # TypeInfo object) ignores the stale int-keyed entry; a buggy id-keyed
-    # cache would return desc_team for ti_person.
+    # address before GC reclaimed it). A correctly-keyed cache ignores the
+    # stale int-keyed entry; a buggy id-keyed cache would return desc_team
+    # for ti_person.
     convert._COMPOUND_CACHE[id(ti_person)] = desc_team
     desc_person_again = convert._compound_descriptor(ti_person)
 
@@ -376,6 +503,191 @@ def test_descriptor_cache_keyed_on_object_not_id():
     return True
 
 
+def _null_paths(node, path=""):
+    """Every path in a tree whose value is None."""
+    found = []
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if value is None:
+                found.append(f"{path}.{key}")
+            else:
+                found.extend(_null_paths(value, f"{path}.{key}"))
+    elif isinstance(node, list):
+        for i, value in enumerate(node):
+            found.extend(_null_paths(value, f"{path}[{i}]"))
+    return found
+
+
+def test_bin_to_dict_skip_nulls():
+    """skip_nulls leaves unset optional fields out instead of emitting None."""
+    import zserio
+    from team.api import Contact, Profile
+    from zs_yaml.convert import bin_to_dict
+
+    print("Testing bin_to_dict(skip_nulls=...)...")
+
+    # Profile is the schema's optional-carrying type (Team has no optional
+    # fields, so it cannot exercise this at all). nickname and home are left
+    # unset at the top level, and the second contact leaves handle unset so
+    # the array/compound recursion is covered too.
+    profile = Profile()
+    profile.owner = "Alice"
+    profile.nickname = None
+    profile.home = None
+    filled, empty = Contact(), Contact()
+    filled.kind = "email"
+    filled.handle = "alice@example.com"
+    empty.kind = "phone"
+    empty.handle = None
+    profile.contacts = [filled, empty]
+
+    with tempfile.TemporaryDirectory() as tmp:
+        bin_path = os.path.join(tmp, "profile.bin")
+        zserio.serialize_to_file(profile, bin_path)
+
+        with_nulls, _ = bin_to_dict(bin_path, "team.api", "Profile")
+        without_nulls, _ = bin_to_dict(bin_path, "team.api", "Profile", skip_nulls=True)
+
+    # The default must still emit them — that is 0.11.0 behavior.
+    default_nulls = sorted(_null_paths(with_nulls))
+    assert default_nulls == ['.contacts[1].handle', '.home', '.nickname'], (
+        f"default bin_to_dict emitted unexpected null paths: {default_nulls}"
+    )
+
+    remaining = _null_paths(without_nulls)
+    assert not remaining, f"skip_nulls left None entries at: {remaining}"
+
+    assert set(without_nulls) == {"owner", "contacts"}, (
+        f"skip_nulls produced unexpected top-level keys: {sorted(without_nulls)}"
+    )
+    assert without_nulls["owner"] == "Alice"
+    assert without_nulls["contacts"][0] == {"kind": "email", "handle": "alice@example.com"}, (
+        "skip_nulls must not touch fields that are set"
+    )
+    assert without_nulls["contacts"][1] == {"kind": "phone"}, (
+        "skip_nulls must drop the unset field inside an array element"
+    )
+
+    print(f"   ✓ default keeps {len(default_nulls)} None entries, skip_nulls drops them")
+    return True
+
+
+def test_has_function_invocations():
+    """The flag mirrors whether the document contained any `_f:` call."""
+    from zs_yaml.yaml_transformer import YamlTransformer
+
+    print("Testing YamlTransformer.has_function_invocations...")
+
+    plain = """_meta:
+  schema_module: team.api
+  schema_type: Team
+
+name: "No Functions Here"
+members: []
+"""
+    with_calls = """_meta:
+  schema_module: team.api
+  schema_type: Team
+  transformation_module: "./custom_transformations.py"
+
+name: "Has Functions"
+members:
+  - name: "Alice"
+    age:
+      _f: calculate_age
+      _a: "1990-05-15"
+    address:
+      street: "Main St"
+      city: "Test City"
+      country: "Test Country"
+      zipCode: 12345
+    workExperience: []
+    skills: []
+    hobbies: []
+    bio: "bio"
+"""
+    here = os.path.dirname(os.path.abspath(__file__))
+    with tempfile.TemporaryDirectory() as tmp:
+        plain_path = os.path.join(here, "_tmp_plain.yaml")
+        calls_path = os.path.join(here, "_tmp_calls.yaml")
+        try:
+            with open(plain_path, "w") as f:
+                f.write(plain)
+            with open(calls_path, "w") as f:
+                f.write(with_calls)
+
+            t_plain = YamlTransformer(plain_path)
+            assert t_plain.has_function_invocations is False, (
+                "document without `_f:` reported function invocations"
+            )
+            assert t_plain.data is t_plain.original_data, (
+                "untransformed document should expose the loaded tree as-is"
+            )
+
+            t_calls = YamlTransformer(calls_path)
+            assert t_calls.has_function_invocations is True, (
+                "document with `_f:` reported no function invocations"
+            )
+        finally:
+            for path in (plain_path, calls_path):
+                if os.path.exists(path):
+                    os.remove(path)
+
+    print("   ✓ flag matches the presence of `_f:` in the source")
+    return True
+
+
+def test_insert_yaml_returns_independent_copies():
+    """insert_yaml/repeat_node hand out copies, not aliases of the cached tree."""
+    from zs_yaml.built_in_transformations import _copy_yaml_tree, _deep_copy_data
+
+    print("Testing YAML-tree copy semantics...")
+
+    source = {
+        "a": [1, 2, {"b": "c"}],
+        "d": {"e": [{"f": 1}]},
+        "g": None,
+        "h": True,
+    }
+    copied = _deep_copy_data(source)
+    assert copied == source, "copy changed the values"
+    assert copied is not source, "copy returned the same object"
+    assert copied["a"] is not source["a"], "nested list was aliased"
+    assert copied["a"][2] is not source["a"][2], "nested dict was aliased"
+    assert copied["d"]["e"][0] is not source["d"]["e"][0], "deeply nested dict was aliased"
+
+    copied["a"][2]["b"] = "mutated"
+    assert source["a"][2]["b"] == "c", "mutating the copy reached the source"
+
+    # A self-referential tree must not blow the stack; deepcopy handles it.
+    cyclic = {"self": None}
+    cyclic["self"] = cyclic
+    fallback = _deep_copy_data(cyclic)
+    assert fallback is not cyclic, "cyclic copy returned the same object"
+    assert fallback["self"] is fallback, "cyclic copy lost its self-reference"
+
+    # Plain-tree copy is the fast route and covers what YAML loading produces.
+    assert _copy_yaml_tree(source) == source
+
+    # A node that is not a plain dict/list/scalar must still be copied, not
+    # aliased — otherwise repeat_node would hand out N views of one object.
+    from collections import OrderedDict
+
+    exotic = {"od": OrderedDict(a=[1]), "tup": ([1], 2), "obj": {1, 2}}
+    exotic_copy = _deep_copy_data(exotic)
+    assert exotic_copy == exotic, "copy changed an exotic node's value"
+    for key in exotic:
+        assert exotic_copy[key] is not exotic[key], f"{key} was aliased, not copied"
+    assert exotic_copy["od"]["a"] is not exotic["od"]["a"], "dict subclass copied shallowly"
+
+    repeated = [_deep_copy_data(exotic) for _ in range(3)]
+    repeated[0]["od"]["a"].append(99)
+    assert repeated[1]["od"]["a"] == [1], "repeated copies share a mutable node"
+
+    print("   ✓ copies are independent; cyclic trees fall back to deepcopy")
+    return True
+
+
 if __name__ == "__main__":
     try:
         # Run all tests
@@ -385,7 +697,11 @@ if __name__ == "__main__":
         test_bin_to_yaml()
         test_bin_to_yaml_with_type_arg()
         test_yaml_to_yaml_with_template_args()
+        test_transform_cache_is_scoped_to_one_transform()
         test_descriptor_cache_keyed_on_object_not_id()
+        test_bin_to_dict_skip_nulls()
+        test_has_function_invocations()
+        test_insert_yaml_returns_independent_copies()
 
         print("\n✅ All conversion tests passed!")
         sys.exit(0)

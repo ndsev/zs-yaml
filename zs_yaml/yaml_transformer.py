@@ -1,10 +1,97 @@
+from contextlib import contextmanager
+from contextvars import ContextVar
 from string import Template
 import importlib
 import importlib.util
 import json
 import os
+import warnings
 import yaml
 import zs_yaml.built_in_transformations
+
+# Cache of already-transformed YAML files for the transform currently in
+# progress. It is a ContextVar rather than a module global so that concurrent
+# transforms in different threads or asyncio tasks never share entries.
+# ``None`` means no transform is in progress and nothing is cached.
+_active_cache = ContextVar("zs_yaml_transform_cache", default=None)
+
+
+# Name of the environment variable a person sets to pick a YAML loader for a
+# run, to one of "auto", "pyyaml" or "ryml". It outranks anything the calling
+# code selected: the loaders produce the same data, so the choice is the
+# operator's to make or to undo.
+LOADER_ENV_VAR = "ZS_YAML_LOADER"
+
+
+def _load_pyyaml(content):
+    """The default loader, and the reference every other loader matches."""
+    return yaml.load(content, Loader=yaml.CLoader)
+
+
+def _resolve_loader(loader):
+    """Return the load function to use, given a per-instance `loader` request.
+
+    Three names are understood. ``"auto"``, the default, uses rapidyaml when it
+    is importable and PyYAML when it is not — installing the ``fast`` extra is
+    the whole opt-in, and an install without it is not an error, so this path
+    neither raises nor warns. ``"ryml"`` demands rapidyaml and ``"pyyaml"``
+    demands the default loader.
+
+    Precedence is environment variable, then the `loader` argument, then
+    :attr:`YamlTransformer.LOADER`. The environment variable comes first
+    because it is how a person overrides what the calling code chose.
+
+    Asking for ``"ryml"`` by name is different from taking it because it
+    happened to be there, so a missing dependency is reported. Where it is
+    reported depends on who asked: setting the environment variable is a
+    deliberate act by whoever runs the conversion, so that raises. Naming the
+    loader from code is a library's default, which must not turn a missing
+    wheel into a broken build, so that warns and uses PyYAML.
+    """
+    from_env = os.environ.get(LOADER_ENV_VAR)
+    selected_by_env = bool(from_env)
+    name = (from_env or loader or YamlTransformer.LOADER).lower()
+
+    if name == "pyyaml":
+        return _load_pyyaml
+    if name not in ("auto", "ryml"):
+        # A name none of the branches recognises is a typo, not a missing
+        # wheel, and falling back would hide it. Every path raises.
+        raise ValueError(
+            f"Unknown YAML loader '{name}'. Expected 'auto', 'pyyaml' or "
+            f"'ryml' (install rapidyaml with: pip install zs-yaml[fast])."
+        )
+
+    from zs_yaml import _ryml_loader
+    try:
+        _ryml_loader.ensure_available()
+    except ImportError:
+        if name == "auto":
+            return _load_pyyaml
+        if selected_by_env:
+            raise
+        warnings.warn(
+            f"YAML loader 'ryml' was selected in code but rapidyaml is not "
+            f"installed; falling back to PyYAML. Install it with "
+            f"'pip install zs-yaml[fast]', or set {LOADER_ENV_VAR}=auto to "
+            f"silence this.",
+            RuntimeWarning,
+            stacklevel=3,
+        )
+        return _load_pyyaml
+    return _ryml_loader.load
+
+
+def _loader_kwarg(loader):
+    """`loader=` as keyword arguments, empty when no loader was requested.
+
+    `YamlTransformer` is subclassed with the three-parameter `__init__` it had
+    before `loader` existed — `examples/team/test_all_conversions.py` does it.
+    Forwarding the parameter only when a loader was actually selected leaves
+    those subclasses working on the default path.
+    """
+    return {"loader": loader} if loader is not None else {}
+
 
 class TransformationError(Exception):
     """Exception raised during YAML transformation with file context."""
@@ -20,17 +107,44 @@ class YamlTransformer:
     """
     Encapsulates a transformed yaml and allows
     accessing the transformed data, original data and metadata..
+
+    ``has_function_invocations`` says whether the source document contained any
+    ``_f:`` calls at all; when it is False, ``data`` is the loaded document
+    unchanged.
+
+    Transformed files are cached only for the duration of one transform, so
+    converting many documents in one process does not accumulate expanded
+    trees. See :meth:`cache_session` to widen that window deliberately.
     """
 
-    # Class-level caches (modules and transformed yamls)
+    # Loaded transformation modules, keyed by absolute file path. Bounded by
+    # the number of distinct transformation modules a process imports, the
+    # same way `sys.modules` is; deliberately not per-transform, because
+    # re-executing a module would produce new function objects and trip the
+    # duplicate-name check in `_register_function`.
     _loaded_modules = {}
-    _transformed_yaml_cache = {}
 
-    def __init__(self, yaml_file_path, template_args=None, initial_transformations=None):
+    # Which YAML loader to use when the caller names none. "auto" takes
+    # rapidyaml when the optional [fast] extra is installed and PyYAML's
+    # CLoader otherwise; "ryml" and "pyyaml" name one of them outright. All
+    # three build the same Python tree; see the module-level `_resolve_loader`
+    # for how a selection is made and what happens when rapidyaml is missing.
+    LOADER = "auto"
+
+    def __init__(self, yaml_file_path, template_args=None, initial_transformations=None,
+                 loader=None):
         self.yaml_file_path = os.path.abspath(yaml_file_path)
         self.transformations = initial_transformations or {}
+        # The requested name is kept alongside the resolved function so that
+        # included documents can be transformed with the same selection.
+        self._loader_name = loader
+        self._load_yaml = _resolve_loader(loader)
         self._load_functions(zs_yaml.built_in_transformations)
-        self._load_and_transform(template_args)
+        # Opening a session here is what makes repeated includes inside this
+        # document share one transformer. When a session is already open
+        # (nested include, or one opened by the caller) this joins it.
+        with self.cache_session():
+            self._load_and_transform(template_args)
 
     def _load_and_transform(self, template_args):
         try:
@@ -50,7 +164,7 @@ class YamlTransformer:
         needs_transformation = "_f:" in content
 
         try:
-            self.original_data = yaml.load(content, Loader=yaml.CLoader)
+            self.original_data = self._load_yaml(content)
         except yaml.YAMLError as e:
             # Extract line/column info if available
             line_info = ""
@@ -70,7 +184,10 @@ class YamlTransformer:
         else:
             self.metadata = None
 
-        # Skip transformation processing if no function calls detected
+        # Skip transformation processing if no function calls detected. The flag
+        # is public so an embedding tool can skip its own post-transform walk
+        # (e.g. extern materialization) for documents that have no `_f:` at all.
+        self.has_function_invocations = needs_transformation
         if needs_transformation:
             self.data = self._process(self.original_data)
         else:
@@ -150,25 +267,76 @@ class YamlTransformer:
         return data
 
     @classmethod
-    def get_or_create(cls, yaml_file_path, template_args=None, initial_transformations=None):
+    @contextmanager
+    def cache_session(cls):
+        """Share one transform cache across everything done inside the block.
+
+        Without it, each top-level transform gets its own cache and drops it
+        on return, so a process converting many documents retains none of
+        them. Open a session when several documents pull in the same
+        includes and that work should be done once::
+
+            with YamlTransformer.cache_session():
+                for src, dst in jobs:
+                    yaml_to_bin(src, dst)
+
+        Everything cached inside is released when the block exits. Files are
+        assumed not to change while a session is open; if a transformation
+        rewrites a file that an earlier include already read (as
+        `extract_extern_as_yaml` can), call :meth:`clear_cache` or keep the
+        session narrower.
+
+        Nesting joins the outer session rather than starting a second one, so
+        only the outermost block releases the cache.
+        """
+        existing = _active_cache.get()
+        if existing is not None:
+            yield existing
+            return
+
+        cache = {}
+        token = _active_cache.set(cache)
+        try:
+            yield cache
+        finally:
+            _active_cache.reset(token)
+            cache.clear()
+
+    @classmethod
+    def get_or_create(cls, yaml_file_path, template_args=None, initial_transformations=None,
+                      loader=None):
+        """Return the transformer for `yaml_file_path`, reusing a cached one.
+
+        Reuse is limited to the cache of the enclosing session (see
+        :meth:`cache_session`). Outside any session nothing is cached and
+        every call builds a fresh transformer.
+
+        `loader` is not part of the cache key: both loaders build the same
+        tree, so a cached entry is valid whichever one produced it.
+        """
         abs_path = os.path.abspath(yaml_file_path)
         cache_key = (abs_path, frozenset(template_args.items()) if template_args else None)
 
-        cache = YamlTransformer._transformed_yaml_cache
-        if cache_key in cache:
+        cache = _active_cache.get()
+        if cache is not None and cache_key in cache:
             return cache[cache_key]
 
-        transformed_yaml = cls(abs_path, template_args, initial_transformations)
-        cache[cache_key] = transformed_yaml
+        transformed_yaml = cls(abs_path, template_args, initial_transformations,
+                               **_loader_kwarg(loader))
+        if cache is not None:
+            cache[cache_key] = transformed_yaml
         return transformed_yaml
 
     @classmethod
     def clear_cache(cls):
-        """Clear the entire transformer cache.
+        """Drop what the enclosing cache session has cached so far.
 
-        This should be called when YAML files or their output files (created by
-        transformations like extract_extern_as_yaml) are deleted or modified
-        externally. The cache assumes files are immutable during a session, so
-        external modifications require explicit cache invalidation.
+        Call this inside a :meth:`cache_session` when YAML files or their
+        output files (created by transformations like
+        `extract_extern_as_yaml`) are written or deleted while the session is
+        open, since cached entries would otherwise be stale. Outside a
+        session there is nothing to clear and the call does nothing.
         """
-        cls._transformed_yaml_cache.clear()
+        cache = _active_cache.get()
+        if cache is not None:
+            cache.clear()
