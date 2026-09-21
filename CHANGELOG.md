@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-09-21
+
 ### Added
 - `data_to_zserio_object(data, imported_type, init_args=None)`: builds a zserio object from an in-memory Python `dict` tree, exported from the top-level `zs_yaml` package. It is the path `yaml_to_bin` already took internally once the YAML was transformed; callers holding the tree no longer have to route it through `json.dumps` + `zserio.from_json_string`. Fixes #33
 - `set_extern_bytes_provider(provider)` and the scoped `extern_bytes_provider(provider)` context manager: an embedding tool that already serializes the documents it references as externs can answer `insert_yaml_as_extern` from its own cache. The provider receives `(abs_yaml_path, compression_type)` with `compression_type` already resolved to a `CompressionType` or `None`, and returns `(buffer, bit_size)` or `None` to decline. Consulted only for references without `template_args`.
