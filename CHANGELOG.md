@@ -33,7 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   than ignored: `ZS_YAML_LOADER=ryml` raises, and selecting it from Python warns
   and falls back to PyYAML, so a downstream tool can pin it without a missing
   wheel breaking a build. See
-  [Faster YAML parsing](README.md#faster-yaml-parsing).
+  [Faster YAML parsing](README.md#faster-yaml-parsing). Fixes #34
 
 ### Fixed
 - The compound descriptor cache never hit across top-level conversions. It keyed on the `TypeInfo` object, but a generated `type_info()` builds a fresh `TypeInfo` graph on every call, so every conversion rebuilt the whole descriptor tree and left the dead graphs alive as cache keys. It now keys on the generated class, which is stable for the process. Conversion output is unchanged.
