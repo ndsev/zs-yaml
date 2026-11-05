@@ -30,7 +30,7 @@ dependencies = [
     "zserio>=2.15.0,<3",
     "zstandard",
     "lz4",
-    "brotli",
+    "brotli>=1.2.1",
 ]
 
 [project.optional-dependencies]
