@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- zs-yaml now requires `brotli>=1.2.1`. Brotli up to 1.2.0 has an out-of-bounds write in its decoder ([CVE-2026-111497](https://nvd.nist.gov/vuln/detail/CVE-2026-111497)), and `extract_extern_as_yaml` decompresses brotli streams taken from its input. With the floor, `pip install -U zs-yaml` also upgrades an older brotli. Fixes [#40](https://github.com/ndsev/zs-yaml/issues/40)
+
 ## [0.11.1] - 2026-09-21
 
 ### Added
